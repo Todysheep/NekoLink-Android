@@ -30,23 +30,31 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Sole production path on [AndroidCollector] (no inject):
+ * Drives the **shipped** [AndroidCollector.sample] entry on the **sole** production media path
+ * (no inject alternate):
  *
- * `sample()` → `getSystemService(MEDIA_SESSION_SERVICE)` via real [ContextWrapper]
- * → [app.nekolink.android.collector.MediaSessionManagerBridge.sampleUsingManager]
- * → `msm.getActiveSessions(NLS ComponentName)` → G1 map.
+ * ```
+ * AndroidCollector(context).sample()
+ *   → sampleMedia()
+ *     → context.getSystemService(MEDIA_SESSION_SERVICE)   // real override via ContextWrapper
+ *     → MediaSessionManagerBridge.sampleUsingManager
+ *       → msm.getActiveSessions(MediaNotificationListener ComponentName)
+ *       → MediaMapper G1 fields
+ * ```
  *
- * Complements [AndroidCollectorMediaWireTest] with source-structure checks.
+ * Uses a real [ContextWrapper] override (not Mockito spy of final getSystemService) so
+ * the call into mock [MediaSessionManager] is deterministic.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
-class AndroidCollectorDefaultMediaPathTest {
+class AndroidCollectorMediaWireTest {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
         explicitNulls = false
     }
 
+    /** Real subclass override — shipped sampleMedia reads this MSM. */
     private fun contextWithMsm(msm: MediaSessionManager): Context {
         val base = RuntimeEnvironment.getApplication()
         return object : ContextWrapper(base) {
@@ -58,18 +66,23 @@ class AndroidCollectorDefaultMediaPathTest {
     }
 
     @Test
-    fun sample_callsMsmGetActiveSessions_withNls_neverNull() {
+    fun sample_drivesProductionMediaPath_getActiveSessionsWithNlsComponent() {
         val msm = mock<MediaSessionManager>()
         whenever(msm.getActiveSessions(any())).thenReturn(emptyList())
 
-        val sample = AndroidCollector(contextWithMsm(msm)).sample()
+        // Sole production construction
+        val collector = AndroidCollector(contextWithMsm(msm))
+        val sample = collector.sample()
 
         val captor = argumentCaptor<ComponentName>()
         verify(msm).getActiveSessions(captor.capture())
-        assertNotNull(captor.firstValue)
-        assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
-        assertEquals(RuntimeEnvironment.getApplication().packageName, captor.firstValue.packageName)
+        val nls = captor.firstValue
+        assertNotNull("shipped sampleMedia must call getActiveSessions with non-null ComponentName", nls)
+        assertEquals(MediaNotificationListener::class.java.name, nls.className)
+        assertEquals(RuntimeEnvironment.getApplication().packageName, nls.packageName)
         assertNull(sample.media)
+
+        // No inject field on collector
         assertTrue(
             AndroidCollector::class.java.declaredFields.none {
                 it.name.contains("activeMedia", ignoreCase = true)
@@ -78,75 +91,56 @@ class AndroidCollectorDefaultMediaPathTest {
     }
 
     @Test
-    fun sample_mapsG1_fromShippedBridgePath() {
+    fun sample_mapsG1Fields_afterGetActiveSessionsFromShippedCollector() {
         val msm = mock<MediaSessionManager>()
         val controller = mock<MediaController>()
         val metadata = mock<MediaMetadata>()
         val playback = mock<AndroidPlaybackState>()
 
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_TITLE)).thenReturn("default-track")
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_TITLE)).thenReturn("wire-track")
         whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)).thenReturn("a")
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)).thenReturn("artist")
         whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).thenReturn("alb")
-        whenever(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)).thenReturn(66_000L)
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).thenReturn("album")
+        whenever(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)).thenReturn(120_000L)
         whenever(playback.state).thenReturn(AndroidPlaybackState.STATE_PLAYING)
-        whenever(playback.position).thenReturn(1_111L)
-        whenever(controller.packageName).thenReturn("com.def.player")
+        whenever(playback.position).thenReturn(8_888L)
+        whenever(controller.packageName).thenReturn("com.wire.player")
         whenever(controller.metadata).thenReturn(metadata)
         whenever(controller.playbackState).thenReturn(playback)
         whenever(msm.getActiveSessions(any())).thenReturn(listOf(controller))
 
         val sample = AndroidCollector(contextWithMsm(msm)).sample()
-        verify(msm).getActiveSessions(any())
+
+        val captor = argumentCaptor<ComponentName>()
+        verify(msm).getActiveSessions(captor.capture())
+        assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
 
         assertNotNull(sample.media)
         val media = sample.media!!
         assertEquals(PlaybackState.PLAYING, media.playbackState)
-        assertEquals(1_111L, media.positionMs)
-        assertEquals(66_000L, media.durationMs)
-        assertEquals("default-track", media.title)
+        assertEquals(8_888L, media.positionMs)
+        assertEquals(120_000L, media.durationMs)
+        assertEquals("wire-track", media.title)
+        assertEquals("com.wire.player", media.sourceApp)
 
         val wire = json.encodeToString(media)
         val obj = json.parseToJsonElement(wire).jsonObject
         assertEquals("playing", obj["playbackState"]!!.jsonPrimitive.content)
-        assertEquals("1111", obj["positionMs"]!!.jsonPrimitive.content)
-        assertEquals("66000", obj["durationMs"]!!.jsonPrimitive.content)
+        assertEquals("8888", obj["positionMs"]!!.jsonPrimitive.content)
+        assertEquals("120000", obj["durationMs"]!!.jsonPrimitive.content)
+        assertTrue(wire.contains("\"playbackState\""))
+        assertTrue(wire.contains("\"positionMs\""))
+        assertTrue(wire.contains("\"durationMs\""))
     }
 
     @Test
-    fun sample_sourceOnlyUsesBridge_noInject() {
+    fun sample_securityException_fromGetActiveSessions_nullMedia() {
         val msm = mock<MediaSessionManager>()
-        whenever(msm.getActiveSessions(any())).thenReturn(emptyList())
-        AndroidCollector(contextWithMsm(msm)).sample()
-        verify(msm).getActiveSessions(any())
+        whenever(msm.getActiveSessions(any())).thenThrow(SecurityException("nls denied"))
 
-        val text = loadCollectorSource()
-        assertTrue(text.contains("MediaSessionManagerBridge.sampleUsingManager"))
-        assertTrue(!text.contains("activeMediaSessions"))
-        assertTrue(text.contains("MEDIA_SESSION_SERVICE"))
-        val nonComment = text.lineSequence().filter { !it.trimStart().startsWith("//") }
-        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
-    }
-
-    @Test
-    fun sample_securityException_stillInvokesGetActiveSessions() {
-        val msm = mock<MediaSessionManager>()
-        whenever(msm.getActiveSessions(any())).thenThrow(SecurityException("denied"))
         val sample = AndroidCollector(contextWithMsm(msm)).sample()
-        val captor = argumentCaptor<ComponentName>()
-        verify(msm).getActiveSessions(captor.capture())
-        assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
+        verify(msm).getActiveSessions(any())
         assertNull(sample.media)
-    }
-
-    private fun loadCollectorSource(): String {
-        val cwd = java.io.File(System.getProperty("user.dir") ?: ".")
-        val candidates = listOf(
-            java.io.File(cwd, "src/main/java/app/nekolink/android/collector/AndroidCollector.kt"),
-            java.io.File(cwd, "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt"),
-            java.io.File(cwd.parentFile, "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt"),
-        )
-        return candidates.first { it.isFile }.readText(Charsets.UTF_8)
     }
 }
