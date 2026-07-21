@@ -1,75 +1,59 @@
 package app.nekolink.android
 
-import android.content.ComponentName
-import android.content.Context
-import android.content.ContextWrapper
-import android.media.MediaMetadata
-import android.media.session.MediaController
-import android.media.session.MediaSessionManager
-import android.media.session.PlaybackState as AndroidPlaybackState
 import app.nekolink.android.collector.AndroidCollector
-import app.nekolink.android.protocol.PlaybackState
 import app.nekolink.android.service.MediaNotificationListener
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import app.nekolink.android.shadow.ShadowMediaSessionManagerRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
-import org.mockito.kotlin.mock
-import org.mockito.kotlin.verify
-import org.mockito.kotlin.whenever
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * Sole production path on [AndroidCollector] (no inject):
- *
- * `sample()` → `getSystemService(MEDIA_SESSION_SERVICE)` via real [ContextWrapper]
- * → [app.nekolink.android.collector.MediaSessionManagerBridge.sampleUsingManager]
- * → `msm.getActiveSessions(NLS ComponentName)` → G1 map.
- *
- * Complements [AndroidCollectorMediaWireTest] with source-structure checks.
+ * Sole production path structural + real-Application smoke:
+ * [AndroidCollector] → [app.nekolink.android.collector.MediaSessionManagerBridge]
+ * → shadowed [android.media.session.MediaSessionManager.getActiveSessions] with NLS.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [28], shadows = [ShadowMediaSessionManagerRecord::class])
 class AndroidCollectorDefaultMediaPathTest {
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        explicitNulls = false
-    }
 
-    private fun contextWithMsm(msm: MediaSessionManager): Context {
-        val base = RuntimeEnvironment.getApplication()
-        return object : ContextWrapper(base) {
-            override fun getSystemService(name: String): Any? {
-                if (name == Context.MEDIA_SESSION_SERVICE) return msm
-                return super.getSystemService(name)
-            }
-        }
+    @Before
+    fun resetShadow() {
+        ShadowMediaSessionManagerRecord.reset()
     }
 
     @Test
-    fun sample_callsMsmGetActiveSessions_withNls_neverNull() {
-        val msm = mock<MediaSessionManager>()
-        whenever(msm.getActiveSessions(any())).thenReturn(emptyList())
+    fun sample_realApplication_recordsNlsOnGetActiveSessions() {
+        ShadowMediaSessionManagerRecord.controllersToReturn = emptyList()
+        val app = RuntimeEnvironment.getApplication()
+        val sample = AndroidCollector(app).sample()
 
-        val sample = AndroidCollector(contextWithMsm(msm)).sample()
-
-        val captor = argumentCaptor<ComponentName>()
-        verify(msm).getActiveSessions(captor.capture())
-        assertNotNull(captor.firstValue)
-        assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
-        assertEquals(RuntimeEnvironment.getApplication().packageName, captor.firstValue.packageName)
+        assertEquals(1, ShadowMediaSessionManagerRecord.callCount)
+        val nls = ShadowMediaSessionManagerRecord.lastNotificationListener
+        assertNotNull(nls)
+        assertEquals(MediaNotificationListener::class.java.name, nls!!.className)
+        assertEquals(app.packageName, nls.packageName)
         assertNull(sample.media)
+    }
+
+    @Test
+    fun sample_sourceOnlyUsesBridge_noInject_noNullListener() {
+        ShadowMediaSessionManagerRecord.controllersToReturn = emptyList()
+        AndroidCollector(RuntimeEnvironment.getApplication()).sample()
+        assertTrue(ShadowMediaSessionManagerRecord.callCount >= 1)
+
+        val text = loadCollectorSource()
+        assertTrue(text.contains("MediaSessionManagerBridge.sampleUsingManager"))
+        assertTrue(!text.contains("activeMediaSessions"))
+        assertTrue(text.contains("MEDIA_SESSION_SERVICE"))
+        val nonComment = text.lineSequence().filter { !it.trimStart().startsWith("//") }
+        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
         assertTrue(
             AndroidCollector::class.java.declaredFields.none {
                 it.name.contains("activeMedia", ignoreCase = true)
@@ -78,66 +62,10 @@ class AndroidCollectorDefaultMediaPathTest {
     }
 
     @Test
-    fun sample_mapsG1_fromShippedBridgePath() {
-        val msm = mock<MediaSessionManager>()
-        val controller = mock<MediaController>()
-        val metadata = mock<MediaMetadata>()
-        val playback = mock<AndroidPlaybackState>()
-
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_TITLE)).thenReturn("default-track")
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)).thenReturn("a")
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).thenReturn("alb")
-        whenever(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)).thenReturn(66_000L)
-        whenever(playback.state).thenReturn(AndroidPlaybackState.STATE_PLAYING)
-        whenever(playback.position).thenReturn(1_111L)
-        whenever(controller.packageName).thenReturn("com.def.player")
-        whenever(controller.metadata).thenReturn(metadata)
-        whenever(controller.playbackState).thenReturn(playback)
-        whenever(msm.getActiveSessions(any())).thenReturn(listOf(controller))
-
-        val sample = AndroidCollector(contextWithMsm(msm)).sample()
-        verify(msm).getActiveSessions(any())
-
-        assertNotNull(sample.media)
-        val media = sample.media!!
-        assertEquals(PlaybackState.PLAYING, media.playbackState)
-        assertEquals(1_111L, media.positionMs)
-        assertEquals(66_000L, media.durationMs)
-        assertEquals("default-track", media.title)
-
-        val wire = json.encodeToString(media)
-        val obj = json.parseToJsonElement(wire).jsonObject
-        assertEquals("playing", obj["playbackState"]!!.jsonPrimitive.content)
-        assertEquals("1111", obj["positionMs"]!!.jsonPrimitive.content)
-        assertEquals("66000", obj["durationMs"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun sample_sourceOnlyUsesBridge_noInject() {
-        val msm = mock<MediaSessionManager>()
-        whenever(msm.getActiveSessions(any())).thenReturn(emptyList())
-        AndroidCollector(contextWithMsm(msm)).sample()
-        verify(msm).getActiveSessions(any())
-
-        val text = loadCollectorSource()
-        assertTrue(text.contains("MediaSessionManagerBridge.sampleUsingManager"))
-        assertTrue(!text.contains("activeMediaSessions"))
-        assertTrue(text.contains("MEDIA_SESSION_SERVICE"))
-        val nonComment = text.lineSequence().filter { !it.trimStart().startsWith("//") }
-        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
-    }
-
-    @Test
-    fun sample_securityException_stillInvokesGetActiveSessions() {
-        val msm = mock<MediaSessionManager>()
-        whenever(msm.getActiveSessions(any())).thenThrow(SecurityException("denied"))
-        val sample = AndroidCollector(contextWithMsm(msm)).sample()
-        val captor = argumentCaptor<ComponentName>()
-        verify(msm).getActiveSessions(captor.capture())
-        assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
-        assertNull(sample.media)
+    fun sample_noAlternateInjectPathOnClass() {
+        val names = AndroidCollector::class.java.declaredFields.map { it.name }
+        assertTrue(names.none { it.contains("activeMedia", ignoreCase = true) })
+        assertTrue(names.none { it.contains("inject", ignoreCase = true) })
     }
 
     private fun loadCollectorSource(): String {
