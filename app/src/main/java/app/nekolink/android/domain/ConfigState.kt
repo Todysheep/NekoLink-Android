@@ -9,8 +9,10 @@ data class ClientConfig(
     val displayName: String = DEFAULT_DISPLAY_NAME,
     val heartbeatIntervalSecs: Long = 20,
     val pollIntervalSecs: Long = 2,
-    val backgroundIntervalSecs: Long = 45,
-    val backgroundAppCap: Int = 50,
+    /** Force full background list refresh interval (seconds). */
+    val backgroundIntervalSecs: Long = 90,
+    /** Max background apps in snapshot (Android v2 default 12). */
+    val backgroundAppCap: Int = BackgroundFilter.DEFAULT_CAP,
     val showSystemBackground: Boolean = false,
     val autostart: Boolean = false,
 ) {

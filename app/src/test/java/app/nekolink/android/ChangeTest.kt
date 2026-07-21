@@ -79,13 +79,44 @@ class ChangeTest {
     }
 
     @Test
-    fun backgroundCap_default50() {
-        val apps = (0 until 60).map { i ->
+    fun backgroundCap_default12() {
+        val apps = (0 until 20).map { i ->
             BackgroundApp(id = "p$i", name = "App$i")
         }
-        val (out, trunc, hidden) = capBackground(apps, hiddenCount = 2, cap = 50)
-        assertEquals(50, out.size)
+        val (out, trunc, hidden) = capBackground(apps, hiddenCount = 2, cap = 12)
+        assertEquals(12, out.size)
         assertTrue(trunc)
-        assertEquals(12, hidden)
+        assertEquals(10, hidden) // 8 overflow + 2 hidden
+    }
+
+    @Test
+    fun backgroundReorderOnly_isNone() {
+        val a = listOf(
+            BackgroundApp(id = "com.a", name = "A"),
+            BackgroundApp(id = "com.b", name = "B"),
+        )
+        val b = listOf(
+            BackgroundApp(id = "com.b", name = "Bee"),
+            BackgroundApp(id = "com.a", name = "A"),
+        )
+        val prev = CollectedSample(foreground = fg("X", "1"), backgroundApps = a)
+        val next = CollectedSample(foreground = fg("X", "1"), backgroundApps = b)
+        assertEquals(SampleDiff.NONE, classifyChange(prev, next))
+    }
+
+    @Test
+    fun backgroundIdSetChange_isMeaningful() {
+        val prev = CollectedSample(
+            foreground = fg("X", "1"),
+            backgroundApps = listOf(BackgroundApp(id = "com.a", name = "A")),
+        )
+        val next = CollectedSample(
+            foreground = fg("X", "1"),
+            backgroundApps = listOf(
+                BackgroundApp(id = "com.a", name = "A"),
+                BackgroundApp(id = "com.b", name = "B"),
+            ),
+        )
+        assertEquals(SampleDiff.MEANINGFUL, classifyChange(prev, next))
     }
 }

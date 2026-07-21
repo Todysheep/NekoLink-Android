@@ -7,13 +7,13 @@ import app.nekolink.android.protocol.ForegroundApp
 import app.nekolink.android.protocol.MediaSession
 import app.nekolink.android.protocol.SnapshotIngestRequest
 
-/** Cap background list (ADR 0019 default 50). */
+/** Cap background list (Android v2 default 12). */
 fun capBackground(
     apps: List<BackgroundApp>,
     hiddenCount: Int,
     cap: Int,
 ): Triple<List<BackgroundApp>, Boolean, Int> {
-    val effectiveCap = if (cap <= 0) 50 else cap
+    val effectiveCap = if (cap <= 0) BackgroundFilter.DEFAULT_CAP else cap
     if (apps.size <= effectiveCap) {
         return Triple(apps, false, hiddenCount)
     }
@@ -43,10 +43,12 @@ private fun mediaPositionChanged(a: MediaSession?, b: MediaSession?): Boolean {
     return a.positionMs != b.positionMs || a.durationMs != b.durationMs
 }
 
-private fun backgroundEq(a: List<BackgroundApp>, b: List<BackgroundApp>): Boolean {
-    if (a.size != b.size) return false
-    return a.zip(b).all { (x, y) -> x.id == y.id && x.name == y.name && x.title == y.title }
-}
+/**
+ * Background equality for change detection: package-id **set** only.
+ * Reordering or label renames alone should not force a full snapshot.
+ */
+private fun backgroundEq(a: List<BackgroundApp>, b: List<BackgroundApp>): Boolean =
+    BackgroundFilter.sameIdSet(a, b)
 
 private fun deviceEq(a: DeviceSummary?, b: DeviceSummary?): Boolean = a == b
 
@@ -80,6 +82,13 @@ fun classifyChange(prev: CollectedSample?, next: CollectedSample): SampleDiff {
     }
 
     return SampleDiff.NONE
+}
+
+/** Whether background id-set or hidden count changed (for selective ingest). */
+fun backgroundListChanged(prev: CollectedSample?, next: CollectedSample): Boolean {
+    if (prev == null) return next.backgroundApps.isNotEmpty() || next.backgroundHiddenCount > 0
+    return !backgroundEq(prev.backgroundApps, next.backgroundApps) ||
+        prev.backgroundHiddenCount != next.backgroundHiddenCount
 }
 
 /** Build snapshot body from sample + diff policy. */

@@ -74,21 +74,17 @@ class AgentCore(
                 SampleDiff.PROGRESS_ONLY to sample
             }
             SampleDiff.MEANINGFUL -> {
-                var req = buildSnapshotRequest(
+                // Attach background only when forced, first sample, or id-set changed
+                // (avoids re-uploading a 12-app list on every foreground switch).
+                val includeBg =
+                    forceBackground || prev == null || backgroundListChanged(prev, sample)
+                val req = buildSnapshotRequest(
                     sample = sample,
                     displayName = config.displayName,
-                    includeBackground = forceBackground || prev == null,
+                    includeBackground = includeBg,
                     progressOnly = false,
                     backgroundCap = config.backgroundAppCap,
                 )
-                if (!(forceBackground || prev == null)) {
-                    // still send bg if list changed — classify already saw bg change
-                    req = req.copy(
-                        backgroundApps = sample.backgroundApps,
-                        backgroundHiddenCount = sample.backgroundHiddenCount
-                            .takeIf { it > 0 },
-                    )
-                }
                 client.snapshot(token, req)
                 SampleDiff.MEANINGFUL to sample
             }

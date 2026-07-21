@@ -136,6 +136,8 @@ class AndroidCollectorMediaWireTest {
         assertTrue(manifest.contains("MediaNotificationListener"))
         assertTrue(manifest.contains("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"))
         assertTrue(manifest.contains("android.service.notification.NotificationListenerService"))
+        // Package visibility: resolve package ids → display labels for the board
+        assertTrue(manifest.contains("android.permission.QUERY_ALL_PACKAGES"))
 
         // 2) Listener class exists and extends NotificationListenerService
         val listener = File(
@@ -152,6 +154,8 @@ class AndroidCollectorMediaWireTest {
         ).readText(Charsets.UTF_8)
         assertTrue(collector.contains("MediaSessionManagerBridge.sampleUsingManager"))
         assertTrue(collector.contains("MEDIA_SESSION_SERVICE"))
+        assertTrue(collector.contains("resolveMediaSourceApp"))
+        assertTrue(collector.contains("getApplicationLabel"))
         assertFalse(collector.contains("activeMediaSessions"))
         val nonComment = collector.lineSequence().filter { !it.trimStart().startsWith("//") }
         assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
