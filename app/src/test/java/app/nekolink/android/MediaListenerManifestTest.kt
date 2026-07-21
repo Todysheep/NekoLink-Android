@@ -44,11 +44,22 @@ class MediaListenerManifestTest {
         val collector = File(projectRoot(), "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt")
         val text = collector.readText(Charsets.UTF_8)
         assertTrue(
-            "must call production entry sampleForPackage",
+            "default path uses MediaSessionManagerBridge",
+            text.contains("MediaSessionManagerBridge.sampleUsingManager"),
+        )
+        assertTrue(
+            "inject path uses sampleForPackage",
             text.contains("MediaSessionSamplePath.sampleForPackage"),
         )
-        assertTrue(text.contains("getActiveSessions(cn)"))
-        assertTrue(!text.contains("getActiveSessions(null)"))
+        // No live call site should pass a null listener (allow comments/docs only via bridge)
+        val liveCallNull = Regex("""getActiveSessions\s*\(\s*null\s*\)""")
+        assertTrue(
+            "no live getActiveSessions with null listener",
+            !liveCallNull.containsMatchIn(text) ||
+                text.lineSequence().none {
+                    liveCallNull.containsMatchIn(it) && !it.trimStart().startsWith("//")
+                },
+        )
 
         val cn = MediaSessionSamplePath.toComponentName("app.nekolink.android")
         assertEquals(MediaNotificationListener::class.java.name, cn.className)

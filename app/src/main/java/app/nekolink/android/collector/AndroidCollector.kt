@@ -156,30 +156,32 @@ class AndroidCollector(
     }
 
     /**
-     * Production media sample: always goes through
-     * [MediaSessionSamplePath.sampleForPackage] with NLS ComponentName.
+     * Production media sample:
+     * - default: [MediaSessionManagerBridge.sampleUsingManager]
+     *   → NLS ComponentName → `msm.getActiveSessions(cn)` → G1 map
+     * - tests may inject [activeMediaSessions] to stub only the MSM side
      */
     private fun sampleMedia(): MediaSession? {
         return try {
-            val loader = activeMediaSessions ?: defaultActiveMediaSessions()
-            ?: return null
-            MediaSessionSamplePath.sampleForPackage(
-                packageName = context.packageName,
-                getActiveSessions = loader,
-                updatedAt = Instant.now().toString(),
-            )
+            if (activeMediaSessions != null) {
+                MediaSessionSamplePath.sampleForPackage(
+                    packageName = context.packageName,
+                    getActiveSessions = activeMediaSessions,
+                    updatedAt = Instant.now().toString(),
+                )
+            } else {
+                val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                    ?: return null
+                // Default production path — NLS ComponentName only (never a null listener)
+                MediaSessionManagerBridge.sampleUsingManager(
+                    packageName = context.packageName,
+                    msm = msm,
+                    extract = ::extractControllerFields,
+                    updatedAt = Instant.now().toString(),
+                )
+            }
         } catch (_: Exception) {
             null
-        }
-    }
-
-    /** Production: MediaSessionManager.getActiveSessions(nlsComponent). */
-    private fun defaultActiveMediaSessions():
-        ((ComponentName) -> List<MediaSessionSamplePath.ControllerFields>)? {
-        val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-            ?: return null
-        return { cn ->
-            msm.getActiveSessions(cn).map { extractControllerFields(it) }
         }
     }
 

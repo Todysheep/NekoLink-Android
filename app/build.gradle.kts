@@ -82,4 +82,6 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.mockito:mockito-inline:5.2.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
 }

@@ -90,7 +90,7 @@ class ProductionMediaWireTest {
     }
 
     @Test
-    fun androidCollector_callsSampleForPackage_andDefaultUsesGetActiveSessions() {
+    fun androidCollector_defaultPath_usesMediaSessionManagerBridge() {
         val root = projectRoot()
         val collector = File(
             root,
@@ -99,22 +99,28 @@ class ProductionMediaWireTest {
         assertTrue(collector.isFile)
         val text = collector.readText(Charsets.UTF_8)
         assertTrue(
-            "AndroidCollector.sampleMedia must call production entry sampleForPackage",
+            "default (no inject) path must use MediaSessionManagerBridge.sampleUsingManager",
+            text.contains("MediaSessionManagerBridge.sampleUsingManager"),
+        )
+        assertTrue(
+            "inject path still uses sampleForPackage",
             text.contains("MediaSessionSamplePath.sampleForPackage"),
         )
+        val liveCallNull = Regex("""getActiveSessions\s*\(\s*null\s*\)""")
         assertTrue(
-            "default loader must call msm.getActiveSessions(cn) with ComponentName",
-            text.contains("getActiveSessions(cn)"),
+            "collector must not call getActiveSessions with a null listener argument",
+            text.lineSequence().none {
+                liveCallNull.containsMatchIn(it) && !it.trimStart().startsWith("//")
+            },
         )
-        assertTrue(
-            "must never use getActiveSessions(null)",
-            !text.contains("getActiveSessions(null)"),
+        val bridge = File(
+            root,
+            "app/src/main/java/app/nekolink/android/collector/MediaSessionManagerBridge.kt",
         )
-        assertTrue(
-            "activeMediaSessions injection hook must exist for tests of sample()",
-            text.contains("activeMediaSessions"),
-        )
-        assertTrue(text.contains("sampleForPackage"))
+        assertTrue(bridge.isFile)
+        val bridgeText = bridge.readText(Charsets.UTF_8)
+        assertTrue(bridgeText.contains("msm.getActiveSessions(listenerComponent)"))
+        assertTrue(bridgeText.contains("sampleUsingManager"))
     }
 
     @Test
