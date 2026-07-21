@@ -1,0 +1,148 @@
+# Align with NekoLink server ADR 0023: PR/main verify; v* → signed APK on GitHub Release.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests & assemble
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant gradlew
+        run: chmod +x gradlew
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Assemble release (unsigned path / CI key if no secrets)
+        env:
+          NEKO_CI_SIGN: "1"
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+  release:
+    name: Release APK
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant gradlew
+        run: chmod +x gradlew
+
+      - name: Prepare keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KS="$RUNNER_TEMP/neko-upload.jks"
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS"
+            echo "Using repository signing secrets."
+            {
+              echo "NEKO_UPLOAD_STORE_FILE=$KS"
+              echo "NEKO_UPLOAD_STORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+              echo "NEKO_UPLOAD_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+              echo "NEKO_UPLOAD_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            echo "No ANDROID_KEYSTORE_* secrets; generating ephemeral CI keystore (not stable across releases)."
+            PW="neko-ci-${GITHUB_RUN_ID}"
+            keytool -genkeypair -v \
+              -keystore "$KS" \
+              -storepass "$PW" \
+              -keypass "$PW" \
+              -alias neko \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=NekoLink CI, OU=NekoLink, O=Todysheep, L=Internet, ST=NA, C=US"
+            {
+              echo "NEKO_UPLOAD_STORE_FILE=$KS"
+              echo "NEKO_UPLOAD_STORE_PASSWORD=$PW"
+              echo "NEKO_UPLOAD_KEY_ALIAS=neko"
+              echo "NEKO_UPLOAD_KEY_PASSWORD=$PW"
+              echo "EPHEMERAL_KEYSTORE=1"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Inject version from tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          # versionCode: major*10000 + minor*100 + patch (simple semver 0.1.0 → 100)
+          IFS=. read -r MA MI PA <<< "${TAG}"
+          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
+          CODE=$((10#$MA * 10000 + 10#$MI * 100 + 10#$PA))
+          if [ "$CODE" -lt 1 ]; then CODE=1; fi
+          echo "VERSION_NAME=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "Tag $GITHUB_REF_NAME → versionName=$TAG versionCode=$CODE"
+
+      - name: Assemble signed release
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace \
+            -PnekoVersionName="$VERSION_NAME" \
+            -PnekoVersionCode="$VERSION_CODE"
+
+      - name: Rename APK
+        run: |
+          set -euo pipefail
+          SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -n1)
+          test -n "$SRC"
+          DEST="$RUNNER_TEMP/nekolink-android-${GITHUB_REF_NAME}.apk"
+          cp "$SRC" "$DEST"
+          echo "APK_PATH=$DEST" >> "$GITHUB_ENV"
+          ls -la "$DEST"
+
+      - name: Release notes hint
+        run: |
+          if [ "${EPHEMERAL_KEYSTORE:-}" = "1" ]; then
+            echo "RELEASE_NOTE=Built with an ephemeral CI keystore (configure ANDROID_KEYSTORE_* secrets for stable upgrades)." >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_NOTE=Signed with repository keystore secrets." >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_PATH }}
+          generate_release_notes: true
+          body: |
+            NekoLink Android uploader `${{ github.ref_name }}`.
+
+            Side-load the APK. Pair with a registration code from your NekoLink `/admin`.
+
+            ${{ env.RELEASE_NOTE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
