@@ -6,17 +6,14 @@ import app.nekolink.android.protocol.MediaSession
 import app.nekolink.android.service.MediaNotificationListener
 
 /**
- * Shipped media sample path used by [AndroidCollector].
+ * Shipped media sample path used by [AndroidCollector.sampleMedia].
  *
- * Orchestrates:
- * 1. Require a non-null [ComponentName] for [MediaNotificationListener].
- * 2. Call [getActiveSessions] with that ComponentName (production:
- *    `MediaSessionManager.getActiveSessions(cn)` — never null).
- * 3. Prefer playing/paused/buffering sessions.
- * 4. Map through [MediaMapper] → G1 media (playbackState / positionMs / durationMs).
+ * **Production entry:** [sampleForPackage] — builds non-null NLS [ComponentName],
+ * calls [getActiveSessions] with it (production: `MediaSessionManager.getActiveSessions(cn)`),
+ * then maps G1 fields via [MediaMapper].
  *
- * [getActiveSessions] is injectable so tests drive the real entry with a real
- * [ComponentName] (Robolectric) and assert the NLS identity.
+ * [getActiveSessions] is injectable so unit tests drive the **same** entry point
+ * AndroidCollector uses, with a real ComponentName (Robolectric).
  */
 object MediaSessionSamplePath {
 
@@ -51,7 +48,7 @@ object MediaSessionSamplePath {
         return packageName to listenerClassName
     }
 
-    /** Production + tests: build the NLS ComponentName passed to getActiveSessions. */
+    /** Build the non-null NLS ComponentName production passes to getActiveSessions. */
     fun toComponentName(
         packageName: String,
         listenerClassName: String = LISTENER_CLASS_NAME,
@@ -68,10 +65,30 @@ object MediaSessionSamplePath {
     }
 
     /**
-     * Production entry for media sampling.
+     * **Production entry used by [app.nekolink.android.collector.AndroidCollector].**
      *
-     * @param listenerComponent non-null NLS component (never null — API contract)
-     * @param getActiveSessions production: `{ cn -> msm.getActiveSessions(cn).map(...) }`
+     * Builds NLS ComponentName from [packageName], then:
+     * `getActiveSessions(componentName)` → select active → [MediaMapper] G1 fields.
+     *
+     * Production lambda:
+     * `{ cn -> mediaSessionManager.getActiveSessions(cn).map(::extract) }`
+     */
+    fun sampleForPackage(
+        packageName: String,
+        getActiveSessions: (ComponentName) -> List<ControllerFields>,
+        updatedAt: String,
+    ): MediaSession? {
+        val listener = toComponentName(packageName)
+        return sample(
+            listenerComponent = listener,
+            getActiveSessions = getActiveSessions,
+            updatedAt = updatedAt,
+        )
+    }
+
+    /**
+     * Lower-level entry: require [listenerComponent] is NLS, call [getActiveSessions] with it.
+     * Prefer [sampleForPackage] from production code.
      */
     fun sample(
         listenerComponent: ComponentName,

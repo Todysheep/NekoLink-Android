@@ -50,11 +50,12 @@ class MediaSessionSamplePathTest {
     }
 
     @Test
-    fun sample_callsGetActiveSessions_withNonNullNlsComponentName() {
+    fun sampleForPackage_callsGetActiveSessions_withNonNullNlsComponentName() {
         var captured: ComponentName? = null
         var callCount = 0
-        val media = MediaSessionSamplePath.sample(
-            listenerComponent = listener,
+        // Same production entry AndroidCollector.sampleMedia uses
+        val media = MediaSessionSamplePath.sampleForPackage(
+            packageName = packageName,
             getActiveSessions = { cn ->
                 // Production: msm.getActiveSessions(cn) — cn must be NLS ComponentName
                 captured = cn

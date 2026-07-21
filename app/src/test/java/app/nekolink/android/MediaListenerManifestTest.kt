@@ -43,9 +43,11 @@ class MediaListenerManifestTest {
     fun collectorWiresSamplePath_getActiveSessionsWithComponentName() {
         val collector = File(projectRoot(), "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt")
         val text = collector.readText(Charsets.UTF_8)
-        assertTrue(text.contains("MediaSessionSamplePath.sample"))
+        assertTrue(
+            "must call production entry sampleForPackage",
+            text.contains("MediaSessionSamplePath.sampleForPackage"),
+        )
         assertTrue(text.contains("getActiveSessions(cn)"))
-        assertTrue(text.contains("toComponentName"))
         assertTrue(!text.contains("getActiveSessions(null)"))
 
         val cn = MediaSessionSamplePath.toComponentName("app.nekolink.android")

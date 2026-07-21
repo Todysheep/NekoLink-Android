@@ -145,10 +145,9 @@ class AndroidCollector(
         return try {
             val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
                 ?: return null
-            // Non-null NLS ComponentName — required for 通知使用权 authorization.
-            val listener = MediaSessionSamplePath.toComponentName(context.packageName)
-            MediaSessionSamplePath.sample(
-                listenerComponent = listener,
+            // Production entry: sampleForPackage → toComponentName(NLS) → msm.getActiveSessions(cn)
+            MediaSessionSamplePath.sampleForPackage(
+                packageName = context.packageName,
                 getActiveSessions = { cn ->
                     msm.getActiveSessions(cn).map { extractControllerFields(it) }
                 },
