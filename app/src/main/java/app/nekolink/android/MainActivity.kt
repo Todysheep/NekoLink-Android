@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
                             busy = state.busy,
                             message = state.message,
                             usageAccessGranted = state.usageAccessGranted,
+                            notificationListenerGranted = state.notificationListenerGranted,
                             onPauseToggle = { vm.setPaused(it) },
                             onSaveDisplayName = { vm.saveDisplayName(it) },
                             onShowSystem = { vm.setShowSystemBackground(it) },
@@ -61,7 +62,9 @@ class MainActivity : ComponentActivity() {
                                 startActivity(AndroidCollector.usageAccessSettingsIntent())
                             },
                             onOpenNotificationAccess = {
-                                startActivity(AndroidCollector.notificationListenerSettingsIntent())
+                                startActivity(
+                                    AndroidCollector.notificationListenerSettingsIntent(this@MainActivity),
+                                )
                             },
                             onStopService = {
                                 vm.stopServiceAndFinish()

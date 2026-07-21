@@ -148,6 +148,7 @@ fun SettingsScreen(
     busy: Boolean,
     message: String?,
     usageAccessGranted: Boolean,
+    notificationListenerGranted: Boolean = false,
     onPauseToggle: (Boolean) -> Unit,
     onSaveDisplayName: (String) -> Unit,
     onShowSystem: (Boolean) -> Unit,
@@ -191,7 +192,7 @@ fun SettingsScreen(
 
             StatusCard(status)
 
-            if (!usageAccessGranted) {
+            if (!usageAccessGranted || !notificationListenerGranted) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -201,13 +202,24 @@ fun SettingsScreen(
                     ),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("需要「使用情况访问」权限", fontWeight = FontWeight.SemiBold)
-                        Text("未授权时前台/后台应用将降级为空，快照会标记 partialPermissions。")
-                        Button(onClick = onOpenUsageAccess, modifier = Modifier.testTag("open_usage_access")) {
-                            Text("打开使用情况设置")
+                        Text("权限引导", fontWeight = FontWeight.SemiBold)
+                        if (!usageAccessGranted) {
+                            Text("需要「使用情况访问」：未授权时前台/后台应用将降级为空，快照会标记 partialPermissions。")
+                            Button(onClick = onOpenUsageAccess, modifier = Modifier.testTag("open_usage_access")) {
+                                Text("打开使用情况设置")
+                            }
                         }
-                        OutlinedButton(onClick = onOpenNotificationAccess) {
-                            Text("打开通知使用权（媒体，可选）")
+                        if (!notificationListenerGranted) {
+                            Text(
+                                "需要「通知使用权」：授权后才能读取其他应用的 MediaSession（标题/播放态/进度）。" +
+                                    "请在系统列表中开启「NekoLink 媒体状态」。",
+                            )
+                            OutlinedButton(
+                                onClick = onOpenNotificationAccess,
+                                modifier = Modifier.testTag("open_notification_access"),
+                            ) {
+                                Text("打开通知使用权（媒体）")
+                            }
                         }
                     }
                 }

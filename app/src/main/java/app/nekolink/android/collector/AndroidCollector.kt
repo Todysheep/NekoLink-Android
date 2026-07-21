@@ -2,6 +2,7 @@ package app.nekolink.android.collector
 
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -20,7 +21,7 @@ import app.nekolink.android.protocol.DeviceSummary
 import app.nekolink.android.protocol.ForegroundApp
 import app.nekolink.android.protocol.ForegroundKind
 import app.nekolink.android.protocol.MediaSession
-import app.nekolink.android.protocol.PlaybackState as ProtoPlayback
+import app.nekolink.android.service.MediaNotificationListener
 import java.time.Instant
 
 /**
@@ -145,10 +146,13 @@ class AndroidCollector(
         return try {
             val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
                 ?: return null
+            // Must pass our NotificationListenerService ComponentName (not null) so the
+            // app appears under 通知使用权 and getActiveSessions is authorized after grant.
+            val listener = notificationListenerComponent(context)
             val controllers: List<MediaController> = try {
-                msm.getActiveSessions(null)
+                msm.getActiveSessions(listener)
             } catch (_: SecurityException) {
-                // Notification listener permission not granted — honest null media.
+                // Notification listener not granted — honest null media.
                 return null
             }
             val active = controllers.firstOrNull { c ->
@@ -167,32 +171,21 @@ class AndroidCollector(
         val meta = c.metadata ?: return null
         val title = meta.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            ?: return null
         val artist = meta.getString(MediaMetadata.METADATA_KEY_ARTIST)
             ?: meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
         val album = meta.getString(MediaMetadata.METADATA_KEY_ALBUM)
-        val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION).takeIf { it > 0 }
+        val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
         val state = c.playbackState
-        val pos = state?.position?.takeIf { it >= 0 }
-        return MediaSession(
+        return MediaMapper.toMediaSession(
             title = title,
             artist = artist,
             album = album,
             sourceApp = c.packageName,
-            artworkUrl = null,
-            artworkHash = null,
-            playbackState = mapPlayback(state?.state),
-            positionMs = pos,
+            androidPlaybackState = state?.state,
+            positionMs = state?.position,
             durationMs = duration,
             updatedAt = Instant.now().toString(),
         )
-    }
-
-    private fun mapPlayback(state: Int?): ProtoPlayback = when (state) {
-        PlaybackState.STATE_PLAYING, PlaybackState.STATE_BUFFERING -> ProtoPlayback.PLAYING
-        PlaybackState.STATE_PAUSED -> ProtoPlayback.PAUSED
-        PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> ProtoPlayback.STOPPED
-        else -> ProtoPlayback.UNKNOWN
     }
 
     private fun batteryPercent(): Int? {
@@ -214,11 +207,41 @@ class AndroidCollector(
         }
     }
 
+    fun hasNotificationListenerAccess(): Boolean =
+        Companion.hasNotificationListenerAccess(context)
+
     companion object {
+        fun notificationListenerComponent(context: Context): ComponentName =
+            ComponentName(context, MediaNotificationListener::class.java)
+
         fun usageAccessSettingsIntent(): Intent =
             Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
 
-        fun notificationListenerSettingsIntent(): Intent =
-            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        /**
+         * Open system UI to grant notification listener access for our NLS component.
+         * On API 30+ deep-links to this app's entry when possible.
+         */
+        fun notificationListenerSettingsIntent(context: Context): Intent {
+            val component = notificationListenerComponent(context)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
+                    putExtra(
+                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                        component.flattenToString(),
+                    )
+                }
+            } else {
+                Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            }
+        }
+
+        fun hasNotificationListenerAccess(context: Context): Boolean {
+            val enabled = Settings.Secure.getString(
+                context.contentResolver,
+                "enabled_notification_listeners",
+            ) ?: return false
+            val flat = notificationListenerComponent(context).flattenToString()
+            return enabled.split(':').any { it.equals(flat, ignoreCase = true) }
+        }
     }
 }

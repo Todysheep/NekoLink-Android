@@ -30,6 +30,7 @@ data class UiState(
     val busy: Boolean = false,
     val message: String? = null,
     val usageAccessGranted: Boolean = false,
+    val notificationListenerGranted: Boolean = false,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -51,7 +52,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val config = store.loadConfig()
         val creds = store.loadCredentials()
         val paused = store.isPaused()
-        val usage = AndroidCollector(getApplication()).hasUsageAccess()
+        val collector = AndroidCollector(getApplication())
+        val usage = collector.hasUsageAccess()
+        val nls = collector.hasNotificationListenerAccess()
         val machine = ConfigStateMachine.State(
             config = config,
             credentials = creds,
@@ -68,6 +71,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 status = status,
                 usageAccessGranted = usage,
+                notificationListenerGranted = nls,
                 message = null,
             )
         }
@@ -80,7 +84,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val config = store.loadConfig()
         val creds = store.loadCredentials()
         val paused = store.isPaused() || RuntimeStatus.paused.get()
-        val usage = AndroidCollector(getApplication()).hasUsageAccess()
+        val collector = AndroidCollector(getApplication())
+        val usage = collector.hasUsageAccess()
+        val nls = collector.hasNotificationListenerAccess()
         val machine = ConfigStateMachine.State(
             config = config,
             credentials = creds,
@@ -98,7 +104,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             status = status.copy(phase = if (paused) AgentPhase.PAUSED else phaseOverride)
         }
         _state.update {
-            it.copy(status = status, usageAccessGranted = usage)
+            it.copy(
+                status = status,
+                usageAccessGranted = usage,
+                notificationListenerGranted = nls,
+            )
         }
     }
 

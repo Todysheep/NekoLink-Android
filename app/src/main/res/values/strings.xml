@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NekoLink</string>
+    <string name="media_listener_label">NekoLink 媒体状态</string>
 </resources>
