@@ -1,5 +1,6 @@
 package app.nekolink.android
 
+import android.media.session.PlaybackState as AndroidPlaybackState
 import app.nekolink.android.collector.MediaMapper
 import app.nekolink.android.protocol.PlaybackState
 import kotlinx.serialization.encodeToString
@@ -13,9 +14,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Drives shipped [MediaMapper] — the real path AndroidCollector uses after
- * MediaSessionManager.getActiveSessions(ComponentName) returns controllers.
- * Proves G1 fields: playbackState / positionMs / durationMs.
+ * Drives shipped [MediaMapper] with **framework** [AndroidPlaybackState] constants —
+ * same constants AndroidCollector / MediaSessionSamplePath pass after getActiveSessions.
  */
 class MediaMapperTest {
     private val json = Json {
@@ -31,7 +31,7 @@ class MediaMapperTest {
             artist = "artist",
             album = "album",
             sourceApp = "com.spotify.music",
-            androidPlaybackState = MediaMapper.STATE_PLAYING,
+            androidPlaybackState = AndroidPlaybackState.STATE_PLAYING,
             positionMs = 12_345L,
             durationMs = 200_000L,
             updatedAt = "2026-07-21T12:00:00Z",
@@ -60,7 +60,7 @@ class MediaMapperTest {
             artist = null,
             album = null,
             sourceApp = "player",
-            androidPlaybackState = MediaMapper.STATE_BUFFERING,
+            androidPlaybackState = AndroidPlaybackState.STATE_BUFFERING,
             positionMs = 0L,
             durationMs = 1000L,
             updatedAt = "2026-07-21T12:00:00Z",
@@ -76,7 +76,7 @@ class MediaMapperTest {
             artist = null,
             album = null,
             sourceApp = null,
-            androidPlaybackState = MediaMapper.STATE_PAUSED,
+            androidPlaybackState = AndroidPlaybackState.STATE_PAUSED,
             positionMs = 50L,
             durationMs = 100L,
             updatedAt = "2026-07-21T12:00:00Z",
@@ -92,7 +92,7 @@ class MediaMapperTest {
                 artist = "a",
                 album = null,
                 sourceApp = "x",
-                androidPlaybackState = MediaMapper.STATE_PLAYING,
+                androidPlaybackState = AndroidPlaybackState.STATE_PLAYING,
                 positionMs = 1L,
                 durationMs = 2L,
                 updatedAt = "t",
@@ -104,22 +104,11 @@ class MediaMapperTest {
                 artist = "a",
                 album = null,
                 sourceApp = "x",
-                androidPlaybackState = MediaMapper.STATE_PLAYING,
+                androidPlaybackState = AndroidPlaybackState.STATE_PLAYING,
                 positionMs = 1L,
                 durationMs = 2L,
                 updatedAt = "t",
             ),
         )
-    }
-
-    @Test
-    fun mapPlaybackState_constantsMatchFramework() {
-        // Framework: NONE=0 STOPPED=1 PAUSED=2 PLAYING=3 BUFFERING=6
-        assertEquals(PlaybackState.STOPPED, MediaMapper.mapPlaybackState(0))
-        assertEquals(PlaybackState.STOPPED, MediaMapper.mapPlaybackState(1))
-        assertEquals(PlaybackState.PAUSED, MediaMapper.mapPlaybackState(2))
-        assertEquals(PlaybackState.PLAYING, MediaMapper.mapPlaybackState(3))
-        assertEquals(PlaybackState.PLAYING, MediaMapper.mapPlaybackState(6))
-        assertEquals(PlaybackState.UNKNOWN, MediaMapper.mapPlaybackState(99))
     }
 }

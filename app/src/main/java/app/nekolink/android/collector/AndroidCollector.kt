@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import android.media.session.PlaybackState
 import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
@@ -148,43 +147,40 @@ class AndroidCollector(
                 ?: return null
             // Must pass our NotificationListenerService ComponentName (not null) so the
             // app appears under 通知使用权 and getActiveSessions is authorized after grant.
-            val listener = notificationListenerComponent(context)
-            val controllers: List<MediaController> = try {
-                msm.getActiveSessions(listener)
-            } catch (_: SecurityException) {
-                // Notification listener not granted — honest null media.
-                return null
-            }
-            val active = controllers.firstOrNull { c ->
-                val st = c.playbackState?.state
-                st == PlaybackState.STATE_PLAYING ||
-                    st == PlaybackState.STATE_PAUSED ||
-                    st == PlaybackState.STATE_BUFFERING
-            } ?: controllers.firstOrNull()
-            active?.let { controllerToMedia(it) }
+            val listenerClass = MediaSessionSamplePath.LISTENER_CLASS_NAME
+            MediaSessionSamplePath.sample(
+                listenerClassName = listenerClass,
+                fetchSessions = { className ->
+                    val cn = MediaSessionSamplePath.toComponentName(
+                        packageName = context.packageName,
+                        listenerClassName = className,
+                    )
+                    msm.getActiveSessions(cn).map { extractControllerFields(it) }
+                },
+                updatedAt = Instant.now().toString(),
+            )
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun controllerToMedia(c: MediaController): MediaSession? {
-        val meta = c.metadata ?: return null
-        val title = meta.getString(MediaMetadata.METADATA_KEY_TITLE)
-            ?: meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-        val artist = meta.getString(MediaMetadata.METADATA_KEY_ARTIST)
-            ?: meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
-        val album = meta.getString(MediaMetadata.METADATA_KEY_ALBUM)
-        val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
+    private fun extractControllerFields(c: MediaController): MediaSessionSamplePath.ControllerFields {
+        val meta = c.metadata
+        val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+        val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+            ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
+        val album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)
+        val duration = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)
         val state = c.playbackState
-        return MediaMapper.toMediaSession(
+        return MediaSessionSamplePath.ControllerFields(
+            packageName = c.packageName,
             title = title,
             artist = artist,
             album = album,
-            sourceApp = c.packageName,
             androidPlaybackState = state?.state,
             positionMs = state?.position,
             durationMs = duration,
-            updatedAt = Instant.now().toString(),
         )
     }
 

@@ -1,26 +1,27 @@
 package app.nekolink.android.collector
 
+import android.media.session.PlaybackState as AndroidPlaybackState
 import app.nekolink.android.protocol.MediaSession
 import app.nekolink.android.protocol.PlaybackState
 
 /**
  * Pure mapping from Android media session fields → protocol MediaSession (G1).
- * Unit-testable without framework MediaController.
- *
- * Android PlaybackState constants (framework):
- *  NONE=0, STOPPED=1, PAUSED=2, PLAYING=3, BUFFERING=6, ...
+ * Uses **framework** [AndroidPlaybackState] constants (not duplicated magic numbers).
+ * Called by [MediaSessionSamplePath] after getActiveSessions(ComponentName).
  */
 object MediaMapper {
-    const val STATE_NONE = 0
-    const val STATE_STOPPED = 1
-    const val STATE_PAUSED = 2
-    const val STATE_PLAYING = 3
-    const val STATE_BUFFERING = 6
 
     fun mapPlaybackState(androidState: Int?): PlaybackState = when (androidState) {
-        STATE_PLAYING, STATE_BUFFERING -> PlaybackState.PLAYING
-        STATE_PAUSED -> PlaybackState.PAUSED
-        STATE_STOPPED, STATE_NONE -> PlaybackState.STOPPED
+        AndroidPlaybackState.STATE_PLAYING,
+        AndroidPlaybackState.STATE_BUFFERING,
+        -> PlaybackState.PLAYING
+
+        AndroidPlaybackState.STATE_PAUSED -> PlaybackState.PAUSED
+
+        AndroidPlaybackState.STATE_STOPPED,
+        AndroidPlaybackState.STATE_NONE,
+        -> PlaybackState.STOPPED
+
         else -> PlaybackState.UNKNOWN
     }
 
