@@ -26,11 +26,25 @@ import java.time.Instant
 /**
  * Android UsageStats / MediaSession / battery collector (ADR 0010).
  * Degrades honestly when permissions are missing (partialPermissions=true).
+ *
+ * Media path (production):
+ * [sample] → [sampleMedia] → [MediaSessionSamplePath.sampleForPackage]
+ * → builds NLS [ComponentName] → [activeMediaSessions] (`msm.getActiveSessions(cn)`)
+ * → [MediaMapper] G1 fields.
+ *
+ * [activeMediaSessions] is injectable so unit tests drive **[sample]** (the real
+ * collector entry) with a real NLS ComponentName without a device.
  */
 class AndroidCollector(
     private val context: Context,
     private val showSystemBackground: Boolean = false,
     private val backgroundCap: Int = BackgroundFilter.DEFAULT_CAP,
+    /**
+     * Production default: `MediaSessionManager.getActiveSessions(listenerComponent)`.
+     * Tests inject a fake that still receives the NLS ComponentName built by
+     * [MediaSessionSamplePath.sampleForPackage].
+     */
+    private val activeMediaSessions: ((ComponentName) -> List<MediaSessionSamplePath.ControllerFields>)? = null,
 ) : Collector {
 
     override fun sample(): CollectedSample {
@@ -141,20 +155,31 @@ class AndroidCollector(
         return kept to hidden
     }
 
+    /**
+     * Production media sample: always goes through
+     * [MediaSessionSamplePath.sampleForPackage] with NLS ComponentName.
+     */
     private fun sampleMedia(): MediaSession? {
         return try {
-            val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-                ?: return null
-            // Production entry: sampleForPackage → toComponentName(NLS) → msm.getActiveSessions(cn)
+            val loader = activeMediaSessions ?: defaultActiveMediaSessions()
+            ?: return null
             MediaSessionSamplePath.sampleForPackage(
                 packageName = context.packageName,
-                getActiveSessions = { cn ->
-                    msm.getActiveSessions(cn).map { extractControllerFields(it) }
-                },
+                getActiveSessions = loader,
                 updatedAt = Instant.now().toString(),
             )
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** Production: MediaSessionManager.getActiveSessions(nlsComponent). */
+    private fun defaultActiveMediaSessions():
+        ((ComponentName) -> List<MediaSessionSamplePath.ControllerFields>)? {
+        val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+            ?: return null
+        return { cn ->
+            msm.getActiveSessions(cn).map { extractControllerFields(it) }
         }
     }
 

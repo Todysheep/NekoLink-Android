@@ -90,7 +90,7 @@ class ProductionMediaWireTest {
     }
 
     @Test
-    fun androidCollector_callsSampleForPackage_notNullGetActiveSessions() {
+    fun androidCollector_callsSampleForPackage_andDefaultUsesGetActiveSessions() {
         val root = projectRoot()
         val collector = File(
             root,
@@ -103,16 +103,18 @@ class ProductionMediaWireTest {
             text.contains("MediaSessionSamplePath.sampleForPackage"),
         )
         assertTrue(
-            "production lambda must call msm.getActiveSessions(cn) with ComponentName",
+            "default loader must call msm.getActiveSessions(cn) with ComponentName",
             text.contains("getActiveSessions(cn)"),
         )
         assertTrue(
             "must never use getActiveSessions(null)",
             !text.contains("getActiveSessions(null)"),
         )
-        // ensure sampleForPackage is preferred over only calling sample(...)
-        val sampleForPackageIdx = text.indexOf("sampleForPackage")
-        assertTrue(sampleForPackageIdx >= 0)
+        assertTrue(
+            "activeMediaSessions injection hook must exist for tests of sample()",
+            text.contains("activeMediaSessions"),
+        )
+        assertTrue(text.contains("sampleForPackage"))
     }
 
     @Test
