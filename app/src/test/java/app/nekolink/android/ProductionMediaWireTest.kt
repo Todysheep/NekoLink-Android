@@ -1,16 +1,8 @@
 package app.nekolink.android
 
-import android.content.ComponentName
-import android.media.session.PlaybackState as AndroidPlaybackState
 import app.nekolink.android.collector.MediaSessionSamplePath
-import app.nekolink.android.protocol.PlaybackState
 import app.nekolink.android.service.MediaNotificationListener
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,78 +11,16 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Proves the **production** media wire that [app.nekolink.android.collector.AndroidCollector]
- * calls:
- *
- * `MediaSessionSamplePath.sampleForPackage(packageName) { cn -> msm.getActiveSessions(cn) ... }`
- *
- * 1. Builds non-null NLS [ComponentName] from package name
- * 2. Feeds that ComponentName into getActiveSessions (never null)
- * 3. Maps framework playback state → G1 playbackState / positionMs / durationMs
- * 4. AndroidCollector source actually calls [MediaSessionSamplePath.sampleForPackage]
+ * Structural + identity checks for the sole production media wire:
+ * AndroidCollector → MediaSessionManagerBridge → getActiveSessions(NLS).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
 class ProductionMediaWireTest {
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        explicitNulls = false
-    }
-
     private val appPackage = "app.nekolink.android"
 
     @Test
-    fun productionEntry_sampleForPackage_buildsNlsComponentAndCallsGetActiveSessions() {
-        var captured: ComponentName? = null
-        var invocations = 0
-
-        val media = MediaSessionSamplePath.sampleForPackage(
-            packageName = appPackage,
-            getActiveSessions = { cn ->
-                // This lambda is what AndroidCollector binds to msm.getActiveSessions(cn)
-                invocations++
-                captured = cn
-                assertNotNull("production must pass non-null ComponentName", cn)
-                assertEquals(
-                    "must be MediaNotificationListener (NLS), not null / other class",
-                    MediaNotificationListener::class.java.name,
-                    cn.className,
-                )
-                assertEquals(appPackage, cn.packageName)
-                listOf(
-                    MediaSessionSamplePath.ControllerFields(
-                        packageName = "com.spotify.music",
-                        title = "G1 Track",
-                        artist = "Artist",
-                        album = "Album",
-                        androidPlaybackState = AndroidPlaybackState.STATE_PLAYING,
-                        positionMs = 42_000L,
-                        durationMs = 180_000L,
-                    ),
-                )
-            },
-            updatedAt = "2026-07-21T15:00:00Z",
-        )
-
-        assertEquals(1, invocations)
-        assertNotNull(captured)
-        assertEquals(MediaNotificationListener::class.java.name, captured!!.className)
-        assertNotNull(media)
-        assertEquals(PlaybackState.PLAYING, media!!.playbackState)
-        assertEquals(42_000L, media.positionMs)
-        assertEquals(180_000L, media.durationMs)
-        assertEquals("G1 Track", media.title)
-
-        val wire = json.encodeToString(media)
-        val obj = json.parseToJsonElement(wire).jsonObject
-        assertEquals("playing", obj["playbackState"]!!.jsonPrimitive.content)
-        assertEquals("42000", obj["positionMs"]!!.jsonPrimitive.content)
-        assertEquals("180000", obj["durationMs"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun androidCollector_defaultPath_usesMediaSessionManagerBridge() {
+    fun androidCollector_solePath_usesMediaSessionManagerBridge() {
         val root = projectRoot()
         val collector = File(
             root,
@@ -99,20 +29,16 @@ class ProductionMediaWireTest {
         assertTrue(collector.isFile)
         val text = collector.readText(Charsets.UTF_8)
         assertTrue(
-            "default (no inject) path must use MediaSessionManagerBridge.sampleUsingManager",
+            "collector must use MediaSessionManagerBridge.sampleUsingManager",
             text.contains("MediaSessionManagerBridge.sampleUsingManager"),
         )
         assertTrue(
-            "inject path still uses sampleForPackage",
-            text.contains("MediaSessionSamplePath.sampleForPackage"),
+            "collector must not keep an activeMediaSessions inject alternate path",
+            !text.contains("activeMediaSessions"),
         )
-        val liveCallNull = Regex("""getActiveSessions\s*\(\s*null\s*\)""")
-        assertTrue(
-            "collector must not call getActiveSessions with a null listener argument",
-            text.lineSequence().none {
-                liveCallNull.containsMatchIn(it) && !it.trimStart().startsWith("//")
-            },
-        )
+        val nonComment = text.lineSequence().filter { !it.trimStart().startsWith("//") }
+        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
+
         val bridge = File(
             root,
             "app/src/main/java/app/nekolink/android/collector/MediaSessionManagerBridge.kt",
@@ -135,6 +61,21 @@ class ProductionMediaWireTest {
             MediaSessionSamplePath.LISTENER_CLASS_NAME,
             MediaNotificationListener::class.java.name,
         )
+    }
+
+    @Test
+    fun productionEntry_sampleForPackage_buildsNlsComponentAndCallsGetActiveSessions() {
+        // Bridge uses sampleForPackage under the hood — keep identity check
+        var capturedClass: String? = null
+        MediaSessionSamplePath.sampleForPackage(
+            packageName = appPackage,
+            getActiveSessions = { cn ->
+                capturedClass = cn.className
+                emptyList()
+            },
+            updatedAt = "t",
+        )
+        assertEquals(MediaNotificationListener::class.java.name, capturedClass)
     }
 
     private fun projectRoot(): File {

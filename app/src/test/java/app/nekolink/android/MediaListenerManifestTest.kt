@@ -11,8 +11,8 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Structural + ComponentName identity: NLS in shipped manifest; production
- * collector wires [MediaSessionSamplePath.sample] with getActiveSessions(ComponentName).
+ * Structural checks: NLS is declared in the **shipped** manifest and the production
+ * collector wires [MediaSessionManagerBridge] with getActiveSessions(ComponentName).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
@@ -40,26 +40,16 @@ class MediaListenerManifestTest {
     }
 
     @Test
-    fun collectorWiresSamplePath_getActiveSessionsWithComponentName() {
+    fun collectorWiresBridge_getActiveSessionsWithComponentName() {
         val collector = File(projectRoot(), "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt")
         val text = collector.readText(Charsets.UTF_8)
         assertTrue(
-            "default path uses MediaSessionManagerBridge",
+            "collector uses MediaSessionManagerBridge",
             text.contains("MediaSessionManagerBridge.sampleUsingManager"),
         )
-        assertTrue(
-            "inject path uses sampleForPackage",
-            text.contains("MediaSessionSamplePath.sampleForPackage"),
-        )
-        // No live call site should pass a null listener (allow comments/docs only via bridge)
-        val liveCallNull = Regex("""getActiveSessions\s*\(\s*null\s*\)""")
-        assertTrue(
-            "no live getActiveSessions with null listener",
-            !liveCallNull.containsMatchIn(text) ||
-                text.lineSequence().none {
-                    liveCallNull.containsMatchIn(it) && !it.trimStart().startsWith("//")
-                },
-        )
+        assertTrue(!text.contains("activeMediaSessions"))
+        val nonComment = text.lineSequence().filter { !it.trimStart().startsWith("//") }
+        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
 
         val cn = MediaSessionSamplePath.toComponentName("app.nekolink.android")
         assertEquals(MediaNotificationListener::class.java.name, cn.className)

@@ -27,24 +27,20 @@ import java.time.Instant
  * Android UsageStats / MediaSession / battery collector (ADR 0010).
  * Degrades honestly when permissions are missing (partialPermissions=true).
  *
- * Media path (production):
- * [sample] → [sampleMedia] → [MediaSessionSamplePath.sampleForPackage]
- * → builds NLS [ComponentName] → [activeMediaSessions] (`msm.getActiveSessions(cn)`)
- * → [MediaMapper] G1 fields.
+ * **Only** media path (no alternate inject):
+ * [sample] → [sampleMedia]
+ *   → [MediaSessionManagerBridge.sampleUsingManager]
+ *     → `context.getSystemService(MEDIA_SESSION_SERVICE)`
+ *     → NLS [ComponentName] ([MediaNotificationListener])
+ *     → `msm.getActiveSessions(nlsComponent)`  // never null
+ *     → [MediaMapper] G1 fields
  *
- * [activeMediaSessions] is injectable so unit tests drive **[sample]** (the real
- * collector entry) with a real NLS ComponentName without a device.
+ * Unit tests drive this path via Context spy + mock [MediaSessionManager].
  */
 class AndroidCollector(
     private val context: Context,
     private val showSystemBackground: Boolean = false,
     private val backgroundCap: Int = BackgroundFilter.DEFAULT_CAP,
-    /**
-     * Production default: `MediaSessionManager.getActiveSessions(listenerComponent)`.
-     * Tests inject a fake that still receives the NLS ComponentName built by
-     * [MediaSessionSamplePath.sampleForPackage].
-     */
-    private val activeMediaSessions: ((ComponentName) -> List<MediaSessionSamplePath.ControllerFields>)? = null,
 ) : Collector {
 
     override fun sample(): CollectedSample {
@@ -156,30 +152,20 @@ class AndroidCollector(
     }
 
     /**
-     * Production media sample:
-     * - default: [MediaSessionManagerBridge.sampleUsingManager]
-     *   → NLS ComponentName → `msm.getActiveSessions(cn)` → G1 map
-     * - tests may inject [activeMediaSessions] to stub only the MSM side
+     * Sole production media path:
+     * [MediaSessionManagerBridge.sampleUsingManager]
+     * → NLS ComponentName → `msm.getActiveSessions(cn)` → G1 map
      */
     private fun sampleMedia(): MediaSession? {
         return try {
-            if (activeMediaSessions != null) {
-                MediaSessionSamplePath.sampleForPackage(
-                    packageName = context.packageName,
-                    getActiveSessions = activeMediaSessions,
-                    updatedAt = Instant.now().toString(),
-                )
-            } else {
-                val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-                    ?: return null
-                // Default production path — NLS ComponentName only (never a null listener)
-                MediaSessionManagerBridge.sampleUsingManager(
-                    packageName = context.packageName,
-                    msm = msm,
-                    extract = ::extractControllerFields,
-                    updatedAt = Instant.now().toString(),
-                )
-            }
+            val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                ?: return null
+            MediaSessionManagerBridge.sampleUsingManager(
+                packageName = context.packageName,
+                msm = msm,
+                extract = ::extractControllerFields,
+                updatedAt = Instant.now().toString(),
+            )
         } catch (_: Exception) {
             null
         }
