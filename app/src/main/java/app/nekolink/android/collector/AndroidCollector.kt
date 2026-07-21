@@ -145,16 +145,11 @@ class AndroidCollector(
         return try {
             val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
                 ?: return null
-            // Must pass our NotificationListenerService ComponentName (not null) so the
-            // app appears under 通知使用权 and getActiveSessions is authorized after grant.
-            val listenerClass = MediaSessionSamplePath.LISTENER_CLASS_NAME
+            // Non-null NLS ComponentName — required for 通知使用权 authorization.
+            val listener = MediaSessionSamplePath.toComponentName(context.packageName)
             MediaSessionSamplePath.sample(
-                listenerClassName = listenerClass,
-                fetchSessions = { className ->
-                    val cn = MediaSessionSamplePath.toComponentName(
-                        packageName = context.packageName,
-                        listenerClassName = className,
-                    )
+                listenerComponent = listener,
+                getActiveSessions = { cn ->
                     msm.getActiveSessions(cn).map { extractControllerFields(it) }
                 },
                 updatedAt = Instant.now().toString(),

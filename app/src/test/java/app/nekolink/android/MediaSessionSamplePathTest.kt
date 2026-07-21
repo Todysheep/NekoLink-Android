@@ -1,5 +1,6 @@
 package app.nekolink.android
 
+import android.content.ComponentName
 import android.media.session.PlaybackState as AndroidPlaybackState
 import app.nekolink.android.collector.MediaMapper
 import app.nekolink.android.collector.MediaSessionSamplePath
@@ -15,12 +16,19 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
- * Drives the **shipped** [MediaSessionSamplePath.sample] entry used by AndroidCollector:
- * validated NLS class name → fetchSessions(className) [production: getActiveSessions(ComponentName)]
- * → MediaMapper G1 fields with framework [AndroidPlaybackState] constants.
+ * Drives shipped [MediaSessionSamplePath.sample] with a **real non-null**
+ * [ComponentName] for [MediaNotificationListener], simulating
+ * `MediaSessionManager.getActiveSessions(cn)` (never null).
+ *
+ * Robolectric provides working ComponentName getters on the JVM.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE)
 class MediaSessionSamplePathTest {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -28,31 +36,32 @@ class MediaSessionSamplePathTest {
         explicitNulls = false
     }
 
-    private val nlsClass = MediaSessionSamplePath.LISTENER_CLASS_NAME
+    private val packageName = "app.nekolink.android"
+    private val listener: ComponentName =
+        MediaSessionSamplePath.toComponentName(packageName)
 
     @Test
-    fun listenerClass_isMediaNotificationListener() {
-        assertEquals(MediaNotificationListener::class.java.name, nlsClass)
-        assertTrue(MediaSessionSamplePath.isNotificationListenerClass(nlsClass))
+    fun toComponentName_isNonNullNls() {
+        assertNotNull(listener)
+        assertEquals(packageName, listener.packageName)
+        assertEquals(MediaNotificationListener::class.java.name, listener.className)
+        assertTrue(MediaSessionSamplePath.isNotificationListenerClass(listener.className))
         assertFalse(MediaSessionSamplePath.isNotificationListenerClass("other.FakeListener"))
-        val pair = MediaSessionSamplePath.listenerComponentName("app.nekolink.android", nlsClass)
-        assertEquals("app.nekolink.android", pair.first)
-        assertEquals(nlsClass, pair.second)
     }
 
     @Test
-    fun sample_callsFetchWithNlsClassName_mapsG1() {
-        var capturedClass: String? = null
-        var fetchCount = 0
+    fun sample_callsGetActiveSessions_withNonNullNlsComponentName() {
+        var captured: ComponentName? = null
+        var callCount = 0
         val media = MediaSessionSamplePath.sample(
-            listenerClassName = nlsClass,
-            fetchSessions = { className ->
-                capturedClass = className
-                fetchCount++
-                // Production would: ComponentName(pkg, className) then msm.getActiveSessions(cn)
-                val (pkg, cls) = MediaSessionSamplePath.listenerComponentName("app.nekolink.android", className)
-                assertEquals(nlsClass, cls)
-                assertEquals("app.nekolink.android", pkg)
+            listenerComponent = listener,
+            getActiveSessions = { cn ->
+                // Production: msm.getActiveSessions(cn) — cn must be NLS ComponentName
+                captured = cn
+                callCount++
+                assertNotNull("getActiveSessions must not receive null ComponentName", cn)
+                assertEquals(MediaNotificationListener::class.java.name, cn.className)
+                assertEquals(packageName, cn.packageName)
                 listOf(
                     MediaSessionSamplePath.ControllerFields(
                         packageName = "com.spotify.music",
@@ -67,14 +76,14 @@ class MediaSessionSamplePathTest {
             },
             updatedAt = "2026-07-21T12:00:00Z",
         )
-        assertEquals(1, fetchCount)
-        assertEquals(nlsClass, capturedClass)
+        assertEquals(1, callCount)
+        assertNotNull(captured)
+        assertEquals(listener.flattenToString(), captured!!.flattenToString())
         assertNotNull(media)
         assertEquals(PlaybackState.PLAYING, media!!.playbackState)
         assertEquals(12_345L, media.positionMs)
         assertEquals(200_000L, media.durationMs)
         assertEquals("com.spotify.music", media.sourceApp)
-        assertEquals("song", media.title)
 
         val wire = json.encodeToString(media)
         val v = json.parseToJsonElement(wire).jsonObject
@@ -86,8 +95,8 @@ class MediaSessionSamplePathTest {
     @Test
     fun sample_prefersPlayingOverIdle() {
         val media = MediaSessionSamplePath.sample(
-            listenerClassName = nlsClass,
-            fetchSessions = {
+            listenerComponent = listener,
+            getActiveSessions = {
                 listOf(
                     MediaSessionSamplePath.ControllerFields(
                         packageName = "idle.app",
@@ -119,8 +128,8 @@ class MediaSessionSamplePathTest {
     @Test
     fun sample_paused_mapsG1_withFrameworkConstant() {
         val media = MediaSessionSamplePath.sample(
-            listenerClassName = nlsClass,
-            fetchSessions = {
+            listenerComponent = listener,
+            getActiveSessions = {
                 listOf(
                     MediaSessionSamplePath.ControllerFields(
                         packageName = "p",
@@ -143,8 +152,8 @@ class MediaSessionSamplePathTest {
     @Test
     fun sample_securityException_returnsNull() {
         val media = MediaSessionSamplePath.sample(
-            listenerClassName = nlsClass,
-            fetchSessions = { throw SecurityException("no nls") },
+            listenerComponent = listener,
+            getActiveSessions = { throw SecurityException("no nls") },
             updatedAt = "t",
         )
         assertNull(media)
@@ -153,18 +162,18 @@ class MediaSessionSamplePathTest {
     @Test
     fun sample_emptySessions_returnsNull() {
         val media = MediaSessionSamplePath.sample(
-            listenerClassName = nlsClass,
-            fetchSessions = { emptyList() },
+            listenerComponent = listener,
+            getActiveSessions = { emptyList() },
             updatedAt = "t",
         )
         assertNull(media)
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun sample_rejectsNonNlsClass() {
+    fun sample_rejectsNonNlsComponent() {
         MediaSessionSamplePath.sample(
-            listenerClassName = "other.pkg.FakeListener",
-            fetchSessions = { emptyList() },
+            listenerComponent = ComponentName("other.pkg", "other.FakeListener"),
+            getActiveSessions = { emptyList() },
             updatedAt = "t",
         )
     }

@@ -5,12 +5,17 @@ import app.nekolink.android.service.MediaNotificationListener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Structural checks: NLS is declared in the **shipped** manifest and the production
- * collector wires [MediaSessionSamplePath] with getActiveSessions(ComponentName).
+ * Structural + ComponentName identity: NLS in shipped manifest; production
+ * collector wires [MediaSessionSamplePath.sample] with getActiveSessions(ComponentName).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], manifest = Config.NONE)
 class MediaListenerManifestTest {
     @Test
     fun manifestDeclaresMediaNotificationListenerService() {
@@ -35,19 +40,17 @@ class MediaListenerManifestTest {
     }
 
     @Test
-    fun collectorWiresSamplePath_andGetActiveSessionsWithComponentName() {
+    fun collectorWiresSamplePath_getActiveSessionsWithComponentName() {
         val collector = File(projectRoot(), "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt")
         val text = collector.readText(Charsets.UTF_8)
         assertTrue(text.contains("MediaSessionSamplePath.sample"))
         assertTrue(text.contains("getActiveSessions(cn)"))
-        assertTrue(text.contains("MediaSessionSamplePath.toComponentName") || text.contains("toComponentName("))
+        assertTrue(text.contains("toComponentName"))
         assertTrue(!text.contains("getActiveSessions(null)"))
-        assertTrue(text.contains("LISTENER_CLASS_NAME"))
 
-        // Identity used when building ComponentName(pkg, className) in production
-        val (pkg, cls) = MediaSessionSamplePath.listenerComponentName("app.nekolink.android")
-        assertEquals("app.nekolink.android", pkg)
-        assertEquals(MediaNotificationListener::class.java.name, cls)
+        val cn = MediaSessionSamplePath.toComponentName("app.nekolink.android")
+        assertEquals(MediaNotificationListener::class.java.name, cn.className)
+        assertEquals("app.nekolink.android", cn.packageName)
     }
 
     private fun locateManifest(): File {
