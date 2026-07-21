@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -23,20 +24,18 @@ import org.mockito.kotlin.whenever
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.File
 
 /**
- * Drives the **shipped** [AndroidCollector.sample] with a **real Application context**
- * (no ContextWrapper, no spy, no activeMediaSessions inject).
+ * **Skeptic gate:** drive shipped [AndroidCollector.sample] and prove production media path:
  *
- * Production chain under test:
- * ```
- * AndroidCollector(application)
- *   .sample()
- *     → getSystemService(MEDIA_SESSION_SERVICE)  // real Context path
- *     → MediaSessionManagerBridge.sampleUsingManager
- *       → msm.getActiveSessions(nls)             // intercepted by [ShadowMediaSessionManagerRecord]
- *       → MediaMapper G1 fields
- * ```
+ * 1. `AndroidCollector(application).sample()` is the entry under test
+ * 2. Production calls `MediaSessionManager.getActiveSessions(non-null NLS ComponentName)`
+ *    where NLS class is [MediaNotificationListener] (declared in AndroidManifest)
+ * 3. Controllers map to G1 fields: playbackState / positionMs / durationMs
+ *
+ * No ContextWrapper / no inject alternate path — real Application +
+ * [ShadowMediaSessionManagerRecord] intercepts the framework call.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], shadows = [ShadowMediaSessionManagerRecord::class])
@@ -53,91 +52,140 @@ class AndroidCollectorMediaWireTest {
     }
 
     @Test
-    fun sample_realApplicationContext_callsGetActiveSessions_withNlsComponent() {
+    fun androidCollector_sample_calls_getActiveSessions_with_nonNull_MediaNotificationListener_ComponentName() {
         ShadowMediaSessionManagerRecord.controllersToReturn = emptyList()
 
-        // Pure production construction — real Application, no Context double
-        val app = RuntimeEnvironment.getApplication()
-        val sample = AndroidCollector(app).sample()
+        val application = RuntimeEnvironment.getApplication()
+        // Drive the SHIPPED collector entry — production path only
+        val collected = AndroidCollector(application).sample()
 
         assertEquals(
-            "shipped sampleMedia must invoke MediaSessionManager.getActiveSessions",
+            "AndroidCollector.sample() must reach MediaSessionManager.getActiveSessions",
             1,
             ShadowMediaSessionManagerRecord.callCount,
         )
-        val nls = ShadowMediaSessionManagerRecord.lastNotificationListener
-        assertNotNull("must not pass null ComponentName to getActiveSessions", nls)
-        assertEquals(MediaNotificationListener::class.java.name, nls!!.className)
-        assertEquals(app.packageName, nls.packageName)
-        assertNull(sample.media)
-
-        assertTrue(
-            "AndroidCollector must not expose an inject alternate path",
-            AndroidCollector::class.java.declaredFields.none {
-                it.name.contains("activeMedia", ignoreCase = true)
-            },
+        val nlsComponent = ShadowMediaSessionManagerRecord.lastNotificationListener
+        assertNotNull(
+            "production must call getActiveSessions with non-null ComponentName (never null)",
+            nlsComponent,
         )
+        assertEquals(
+            "ComponentName must be MediaNotificationListener (NLS for 通知使用权)",
+            MediaNotificationListener::class.java.name,
+            nlsComponent!!.className,
+        )
+        assertEquals(application.packageName, nlsComponent.packageName)
+        assertNull("empty controllers → honest null media", collected.media)
     }
 
     @Test
-    fun sample_realApplicationContext_mapsG1Fields_fromGetActiveSessionsControllers() {
+    fun androidCollector_sample_maps_G1_playbackState_positionMs_durationMs_after_getActiveSessions() {
         val controller = mock<MediaController>()
         val metadata = mock<MediaMetadata>()
         val playback = mock<AndroidPlaybackState>()
 
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_TITLE)).thenReturn("shadow-wire-track")
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_TITLE)).thenReturn("g1-now-playing")
         whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)).thenReturn("artist")
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)).thenReturn("g1-artist")
         whenever(metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)).thenReturn(null)
-        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).thenReturn("album")
-        whenever(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)).thenReturn(150_000L)
+        whenever(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)).thenReturn("g1-album")
+        whenever(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)).thenReturn(210_000L)
         whenever(playback.state).thenReturn(AndroidPlaybackState.STATE_PLAYING)
-        whenever(playback.position).thenReturn(9_999L)
-        whenever(controller.packageName).thenReturn("com.shadow.player")
+        whenever(playback.position).thenReturn(12_345L)
+        whenever(controller.packageName).thenReturn("com.g1.player")
         whenever(controller.metadata).thenReturn(metadata)
         whenever(controller.playbackState).thenReturn(playback)
 
         ShadowMediaSessionManagerRecord.controllersToReturn = listOf(controller)
 
-        val app = RuntimeEnvironment.getApplication()
-        val sample = AndroidCollector(app).sample()
+        val collected = AndroidCollector(RuntimeEnvironment.getApplication()).sample()
 
-        assertEquals(1, ShadowMediaSessionManagerRecord.callCount)
-        val nls = ShadowMediaSessionManagerRecord.lastNotificationListener
-        assertNotNull(nls)
-        assertEquals(MediaNotificationListener::class.java.name, nls!!.className)
-        assertEquals(app.packageName, nls.packageName)
-
-        assertNotNull(sample.media)
-        val media = sample.media!!
-        assertEquals(PlaybackState.PLAYING, media.playbackState)
-        assertEquals(9_999L, media.positionMs)
-        assertEquals(150_000L, media.durationMs)
-        assertEquals("shadow-wire-track", media.title)
-        assertEquals("com.shadow.player", media.sourceApp)
-
-        val wire = json.encodeToString(media)
-        val obj = json.parseToJsonElement(wire).jsonObject
-        assertEquals("playing", obj["playbackState"]!!.jsonPrimitive.content)
-        assertEquals("9999", obj["positionMs"]!!.jsonPrimitive.content)
-        assertEquals("150000", obj["durationMs"]!!.jsonPrimitive.content)
-        assertTrue(wire.contains("\"playbackState\""))
-        assertTrue(wire.contains("\"positionMs\""))
-        assertTrue(wire.contains("\"durationMs\""))
-    }
-
-    @Test
-    fun sample_realApplicationContext_securityException_nullMedia() {
-        // Shadow returns empty; SecurityException path is covered in MediaSessionManagerBridgeTest.
-        // Here prove empty sessions on real Application → honest null media after getActiveSessions.
-        ShadowMediaSessionManagerRecord.controllersToReturn = emptyList()
-        val sample = AndroidCollector(RuntimeEnvironment.getApplication()).sample()
+        // getActiveSessions was invoked with NLS
         assertEquals(1, ShadowMediaSessionManagerRecord.callCount)
         assertNotNull(ShadowMediaSessionManagerRecord.lastNotificationListener)
         assertEquals(
             MediaNotificationListener::class.java.name,
             ShadowMediaSessionManagerRecord.lastNotificationListener!!.className,
         )
-        assertNull(sample.media)
+
+        // G1 media fields from shipped MediaMapper path
+        assertNotNull(collected.media)
+        val media = collected.media!!
+        assertEquals(PlaybackState.PLAYING, media.playbackState)
+        assertEquals(12_345L, media.positionMs)
+        assertEquals(210_000L, media.durationMs)
+        assertEquals("g1-now-playing", media.title)
+        assertEquals("com.g1.player", media.sourceApp)
+
+        val wire = json.encodeToString(media)
+        val obj = json.parseToJsonElement(wire).jsonObject
+        assertEquals("playing", obj["playbackState"]!!.jsonPrimitive.content)
+        assertEquals("12345", obj["positionMs"]!!.jsonPrimitive.content)
+        assertEquals("210000", obj["durationMs"]!!.jsonPrimitive.content)
+        assertTrue(wire.contains("\"playbackState\""))
+        assertTrue(wire.contains("\"positionMs\""))
+        assertTrue(wire.contains("\"durationMs\""))
+    }
+
+    @Test
+    fun productionSources_declareNls_andWireBridge_notNullGetActiveSessions() {
+        val root = projectRoot()
+
+        // 1) MediaNotificationListener must be declared in shipped manifest
+        val manifest = File(root, "app/src/main/AndroidManifest.xml").readText(Charsets.UTF_8)
+        assertTrue(manifest.contains("MediaNotificationListener"))
+        assertTrue(manifest.contains("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"))
+        assertTrue(manifest.contains("android.service.notification.NotificationListenerService"))
+
+        // 2) Listener class exists and extends NotificationListenerService
+        val listener = File(
+            root,
+            "app/src/main/java/app/nekolink/android/service/MediaNotificationListener.kt",
+        ).readText(Charsets.UTF_8)
+        assertTrue(listener.contains("class MediaNotificationListener"))
+        assertTrue(listener.contains("NotificationListenerService"))
+
+        // 3) AndroidCollector sole path uses MediaSessionManagerBridge (no inject)
+        val collector = File(
+            root,
+            "app/src/main/java/app/nekolink/android/collector/AndroidCollector.kt",
+        ).readText(Charsets.UTF_8)
+        assertTrue(collector.contains("MediaSessionManagerBridge.sampleUsingManager"))
+        assertTrue(collector.contains("MEDIA_SESSION_SERVICE"))
+        assertFalse(collector.contains("activeMediaSessions"))
+        val nonComment = collector.lineSequence().filter { !it.trimStart().startsWith("//") }
+        assertTrue(nonComment.none { it.contains("getActiveSessions(null)") })
+
+        // 4) Bridge actually calls msm.getActiveSessions(listenerComponent)
+        val bridge = File(
+            root,
+            "app/src/main/java/app/nekolink/android/collector/MediaSessionManagerBridge.kt",
+        ).readText(Charsets.UTF_8)
+        assertTrue(bridge.contains("msm.getActiveSessions(listenerComponent)"))
+        assertTrue(bridge.contains("sampleUsingManager"))
+
+        // Runtime identity matches manifest NLS
+        assertEquals(
+            "app.nekolink.android.service.MediaNotificationListener",
+            MediaNotificationListener::class.java.name,
+        )
+    }
+
+    private fun projectRoot(): File {
+        val cwd = File(System.getProperty("user.dir") ?: ".")
+        val candidates = listOf(cwd, cwd.parentFile, File(cwd, ".."), File("."), File(".."))
+        for (c in candidates) {
+            if (c == null) continue
+            val norm = c.canonicalFile
+            if (File(norm, "app/src/main/AndroidManifest.xml").isFile) return norm
+            if (File(norm, "src/main/AndroidManifest.xml").isFile) return norm.parentFile
+        }
+        var cur: File? = cwd.canonicalFile
+        repeat(6) {
+            if (cur == null) return@repeat
+            if (File(cur, "app/src/main/AndroidManifest.xml").isFile) return cur!!
+            cur = cur!!.parentFile
+        }
+        error("cannot locate project root from ${cwd.absolutePath}")
     }
 }
