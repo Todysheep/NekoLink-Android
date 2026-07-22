@@ -13,8 +13,8 @@ android {
         applicationId = "app.nekolink.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = (findProperty("nekoVersionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = (findProperty("nekoVersionName") as String?) ?: "0.1.0"
+        versionCode = (findProperty("nekoVersionCode") as String?)?.toIntOrNull() ?: 300
+        versionName = (findProperty("nekoVersionName") as String?) ?: "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

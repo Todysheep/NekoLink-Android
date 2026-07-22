@@ -115,6 +115,56 @@ class ApiClient(
         return obj["privacyShield"]?.jsonPrimitive?.booleanOrNull ?: false
     }
 
+    /**
+     * HEAD `/api/v1/device/assets/{hash}` — true when asset already exists (200), false on 404.
+     * 401 → [ClientError.Unauthorized]; 403 privacy_shield → [ClientError.Server].
+     */
+    fun assetExists(token: String, hash: String): Boolean {
+        val request = Request.Builder()
+            .url(url("/api/v1/device/assets/$hash"))
+            .method("HEAD", null)
+            .header("Authorization", "Bearer $token")
+            .header("User-Agent", userAgent)
+            .build()
+        val (status, bytes) = execute(request)
+        when (status) {
+            200 -> return true
+            404 -> return false
+            401 -> throw ClientError.Unauthorized
+            else -> throw mapAssetError(status, bytes)
+        }
+    }
+
+    /**
+     * PUT `/api/v1/device/assets/{hash}` with raw body; server verifies SHA-256 of body matches [hash].
+     */
+    fun uploadAsset(token: String, hash: String, bytes: ByteArray, contentType: String) {
+        val mediaType = contentType.toMediaType()
+        val request = Request.Builder()
+            .url(url("/api/v1/device/assets/$hash"))
+            .put(bytes.toRequestBody(mediaType))
+            .header("Authorization", "Bearer $token")
+            .header("User-Agent", userAgent)
+            .header("Content-Type", contentType)
+            .build()
+        val (status, body) = execute(request)
+        if (status == 401) throw ClientError.Unauthorized
+        if (status in 200..299) return
+        throw mapAssetError(status, body)
+    }
+
+    private fun mapAssetError(status: Int, bytes: ByteArray): ClientError {
+        val text = String(bytes, Charsets.UTF_8)
+        val err = runCatching { json.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+        if (status == 401 || err?.code == "revoked" || err?.code == "unauthorized") {
+            return ClientError.Unauthorized
+        }
+        if (status == 403 || err?.code == "privacy_shield") {
+            return ClientError.Server(403, err?.error ?: err?.code ?: "privacy_shield")
+        }
+        return ClientError.Server(status, err?.error ?: text.ifBlank { "asset error $status" })
+    }
+
     private fun url(path: String): String = "$base$path"
 
     private fun execute(request: Request): Pair<Int, ByteArray> {

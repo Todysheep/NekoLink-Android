@@ -27,8 +27,11 @@ private fun foregroundIdentityEq(a: ForegroundApp?, b: ForegroundApp?): Boolean 
     return a.kind == b.kind && a.appName == b.appName && a.title == b.title
 }
 
-/** Media identity + playback state (not position). */
-private fun mediaIdentityEq(a: MediaSession?, b: MediaSession?): Boolean {
+/**
+ * Media track/playback identity (not position, not artwork hash).
+ * Used to carry [MediaSession.artworkHash] across progress-only ticks.
+ */
+fun mediaCoreIdentityEq(a: MediaSession?, b: MediaSession?): Boolean {
     if (a == null && b == null) return true
     if (a == null || b == null) return false
     return a.title == b.title &&
@@ -36,6 +39,13 @@ private fun mediaIdentityEq(a: MediaSession?, b: MediaSession?): Boolean {
         a.album == b.album &&
         a.sourceApp == b.sourceApp &&
         a.playbackState == b.playbackState
+}
+
+/** Media identity + playback state + artwork hash (not position). */
+private fun mediaIdentityEq(a: MediaSession?, b: MediaSession?): Boolean {
+    if (a == null && b == null) return true
+    if (a == null || b == null) return false
+    return mediaCoreIdentityEq(a, b) && a.artworkHash == b.artworkHash
 }
 
 private fun mediaPositionChanged(a: MediaSession?, b: MediaSession?): Boolean {

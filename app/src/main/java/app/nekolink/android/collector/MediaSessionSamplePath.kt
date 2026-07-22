@@ -22,6 +22,24 @@ object MediaSessionSamplePath {
 
     const val LISTENER_CLASS_SIMPLE = "MediaNotificationListener"
 
+    /** Media wire fields + optional compressed artwork bytes (not on the snapshot wire). */
+    data class SampledMedia(
+        val media: MediaSession?,
+        val artworkBytes: ByteArray? = null,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is SampledMedia) return false
+            return media == other.media && artworkBytes.contentEquals(other.artworkBytes)
+        }
+
+        override fun hashCode(): Int {
+            var result = media?.hashCode() ?: 0
+            result = 31 * result + (artworkBytes?.contentHashCode() ?: 0)
+            return result
+        }
+    }
+
     data class ControllerFields(
         val packageName: String?,
         val title: String?,
@@ -30,6 +48,8 @@ object MediaSessionSamplePath {
         val androidPlaybackState: Int?,
         val positionMs: Long?,
         val durationMs: Long?,
+        /** Compressed PNG/JPEG bytes from metadata bitmap; null when absent. */
+        val artworkBytes: ByteArray? = null,
     )
 
     fun isNotificationListenerClass(className: String): Boolean {
@@ -77,7 +97,7 @@ object MediaSessionSamplePath {
         packageName: String,
         getActiveSessions: (ComponentName) -> List<ControllerFields>,
         updatedAt: String,
-    ): MediaSession? {
+    ): SampledMedia {
         val listener = toComponentName(packageName)
         return sample(
             listenerComponent = listener,
@@ -89,20 +109,21 @@ object MediaSessionSamplePath {
     /**
      * Lower-level entry: require [listenerComponent] is NLS, call [getActiveSessions] with it.
      * Prefer [sampleForPackage] from production code.
+     * [MediaSession.artworkHash] stays null here; AgentCore fills it after ensure.
      */
     fun sample(
         listenerComponent: ComponentName,
         getActiveSessions: (ComponentName) -> List<ControllerFields>,
         updatedAt: String,
-    ): MediaSession? {
+    ): SampledMedia {
         requireListenerComponent(listenerComponent)
         val sessions = try {
             getActiveSessions(listenerComponent)
         } catch (_: SecurityException) {
-            return null
+            return SampledMedia(null, null)
         }
-        val active = selectActive(sessions) ?: return null
-        return MediaMapper.toMediaSession(
+        val active = selectActive(sessions) ?: return SampledMedia(null, null)
+        val media = MediaMapper.toMediaSession(
             title = active.title,
             artist = active.artist,
             album = active.album,
@@ -111,7 +132,12 @@ object MediaSessionSamplePath {
             positionMs = active.positionMs,
             durationMs = active.durationMs,
             updatedAt = updatedAt,
+            artworkUrl = null,
+            artworkHash = null,
         )
+        // Only attach bytes when media is reportable (non-blank title).
+        val art = if (media != null) active.artworkBytes else null
+        return SampledMedia(media = media, artworkBytes = art)
     }
 
     fun selectActive(sessions: List<ControllerFields>): ControllerFields? {

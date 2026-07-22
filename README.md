@@ -57,6 +57,8 @@ Android「后台」来自 UsageStats **近期用量近似**，不是进程列表
 - `POST /api/v1/device/heartbeat`
 - `PUT /api/v1/device/snapshot`
 - `POST /api/v1/device/privacy-shield`
+- `HEAD /api/v1/device/assets/{hash}` — 封面是否已存在（条件上传）
+- `PUT /api/v1/device/assets/{hash}` — 上传媒体封面原始字节（SHA-256 与 path 一致，≤512 KiB）
 
 ## 本地开发
 

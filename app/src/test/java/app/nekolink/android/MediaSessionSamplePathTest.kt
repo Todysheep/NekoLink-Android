@@ -54,7 +54,7 @@ class MediaSessionSamplePathTest {
         var captured: ComponentName? = null
         var callCount = 0
         // Same production entry AndroidCollector.sampleMedia uses
-        val media = MediaSessionSamplePath.sampleForPackage(
+        val sampled = MediaSessionSamplePath.sampleForPackage(
             packageName = packageName,
             getActiveSessions = { cn ->
                 // Production: msm.getActiveSessions(cn) — cn must be NLS ComponentName
@@ -80,8 +80,11 @@ class MediaSessionSamplePathTest {
         assertEquals(1, callCount)
         assertNotNull(captured)
         assertEquals(listener.flattenToString(), captured!!.flattenToString())
+        val media = sampled.media
         assertNotNull(media)
-        assertEquals(PlaybackState.PLAYING, media!!.playbackState)
+        assertNull(sampled.artworkBytes)
+        assertNull(media!!.artworkHash)
+        assertEquals(PlaybackState.PLAYING, media.playbackState)
         assertEquals(12_345L, media.positionMs)
         assertEquals(200_000L, media.durationMs)
         assertEquals("com.spotify.music", media.sourceApp)
@@ -95,7 +98,7 @@ class MediaSessionSamplePathTest {
 
     @Test
     fun sample_prefersPlayingOverIdle() {
-        val media = MediaSessionSamplePath.sample(
+        val sampled = MediaSessionSamplePath.sample(
             listenerComponent = listener,
             getActiveSessions = {
                 listOf(
@@ -121,6 +124,7 @@ class MediaSessionSamplePathTest {
             },
             updatedAt = "t",
         )
+        val media = sampled.media
         assertEquals("now", media!!.title)
         assertEquals(99L, media.positionMs)
         assertEquals(PlaybackState.PLAYING, media.playbackState)
@@ -128,7 +132,7 @@ class MediaSessionSamplePathTest {
 
     @Test
     fun sample_paused_mapsG1_withFrameworkConstant() {
-        val media = MediaSessionSamplePath.sample(
+        val sampled = MediaSessionSamplePath.sample(
             listenerComponent = listener,
             getActiveSessions = {
                 listOf(
@@ -145,6 +149,7 @@ class MediaSessionSamplePathTest {
             },
             updatedAt = "t",
         )
+        val media = sampled.media
         assertEquals(PlaybackState.PAUSED, media!!.playbackState)
         assertEquals(50L, media.positionMs)
         assertEquals(500L, media.durationMs)
@@ -152,22 +157,50 @@ class MediaSessionSamplePathTest {
 
     @Test
     fun sample_securityException_returnsNull() {
-        val media = MediaSessionSamplePath.sample(
+        val sampled = MediaSessionSamplePath.sample(
             listenerComponent = listener,
             getActiveSessions = { throw SecurityException("no nls") },
             updatedAt = "t",
         )
-        assertNull(media)
+        assertNull(sampled.media)
+        assertNull(sampled.artworkBytes)
     }
 
     @Test
     fun sample_emptySessions_returnsNull() {
-        val media = MediaSessionSamplePath.sample(
+        val sampled = MediaSessionSamplePath.sample(
             listenerComponent = listener,
             getActiveSessions = { emptyList() },
             updatedAt = "t",
         )
-        assertNull(media)
+        assertNull(sampled.media)
+        assertNull(sampled.artworkBytes)
+    }
+
+    @Test
+    fun sample_carriesArtworkBytes_hashNullUntilEnsure() {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 1, 2, 3)
+        val sampled = MediaSessionSamplePath.sample(
+            listenerComponent = listener,
+            getActiveSessions = {
+                listOf(
+                    MediaSessionSamplePath.ControllerFields(
+                        packageName = "p",
+                        title = "with-art",
+                        artist = null,
+                        album = null,
+                        androidPlaybackState = AndroidPlaybackState.STATE_PLAYING,
+                        positionMs = 1L,
+                        durationMs = 2L,
+                        artworkBytes = png,
+                    ),
+                )
+            },
+            updatedAt = "t",
+        )
+        assertNotNull(sampled.media)
+        assertNull(sampled.media!!.artworkHash)
+        assertTrue(sampled.artworkBytes.contentEquals(png))
     }
 
     @Test(expected = IllegalArgumentException::class)

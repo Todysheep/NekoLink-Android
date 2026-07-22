@@ -140,6 +140,11 @@ data class SetPrivacyShieldRequest(
 data class CollectedSample(
     val foreground: ForegroundApp? = null,
     val media: MediaSession? = null,
+    /**
+     * Compressed album-art bytes from MediaSession metadata (not on the wire).
+     * [MediaSession.artworkHash] is filled only after AgentCore ensure (HEAD/PUT) succeeds.
+     */
+    val artworkBytes: ByteArray? = null,
     val backgroundApps: List<BackgroundApp> = emptyList(),
     val backgroundHiddenCount: Int = 0,
     val device: DeviceSummary? = null,

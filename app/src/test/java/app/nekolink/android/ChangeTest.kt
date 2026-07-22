@@ -119,4 +119,39 @@ class ChangeTest {
         )
         assertEquals(SampleDiff.MEANINGFUL, classifyChange(prev, next))
     }
+
+    @Test
+    fun mediaArtworkHashChange_isMeaningful() {
+        val prev = CollectedSample(
+            foreground = fg("X", "1"),
+            media = media("Song", 1000).copy(artworkHash = "aaa"),
+        )
+        val next = CollectedSample(
+            foreground = fg("X", "1"),
+            media = media("Song", 1000).copy(artworkHash = "bbb"),
+        )
+        assertEquals(SampleDiff.MEANINGFUL, classifyChange(prev, next))
+    }
+
+    @Test
+    fun progressOnly_keepsArtworkHashOnMedia() {
+        val prev = CollectedSample(
+            foreground = fg("Code", "main.rs"),
+            media = media("Song", 1000).copy(artworkHash = "deadbeef"),
+        )
+        val next = CollectedSample(
+            foreground = fg("Code", "main.rs"),
+            media = media("Song", 5000).copy(artworkHash = "deadbeef"),
+        )
+        assertEquals(SampleDiff.PROGRESS_ONLY, classifyChange(prev, next))
+        val req = buildSnapshotRequest(
+            next,
+            null,
+            includeBackground = false,
+            progressOnly = true,
+            backgroundCap = 50,
+        )
+        assertEquals("deadbeef", req.media?.artworkHash)
+        assertEquals(5000L, req.media?.positionMs)
+    }
 }

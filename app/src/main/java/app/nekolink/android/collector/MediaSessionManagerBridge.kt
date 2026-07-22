@@ -3,7 +3,6 @@ package app.nekolink.android.collector
 import android.content.ComponentName
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import app.nekolink.android.protocol.MediaSession
 
 /**
  * **Default production path** from [AndroidCollector] when no test injection is used:
@@ -31,13 +30,14 @@ object MediaSessionManagerBridge {
     /**
      * Full default production composition used by [AndroidCollector.sampleMedia]:
      * packageName → NLS ComponentName → [getActiveSessionFields] → [MediaMapper].
+     * Returns media + optional compressed artwork bytes (hash filled later by AgentCore).
      */
     fun sampleUsingManager(
         packageName: String,
         msm: MediaSessionManager,
         extract: (MediaController) -> MediaSessionSamplePath.ControllerFields,
         updatedAt: String,
-    ): MediaSession? {
+    ): MediaSessionSamplePath.SampledMedia {
         return MediaSessionSamplePath.sampleForPackage(
             packageName = packageName,
             getActiveSessions = { cn ->

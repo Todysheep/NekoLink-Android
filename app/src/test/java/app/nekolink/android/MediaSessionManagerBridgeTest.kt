@@ -89,7 +89,7 @@ class MediaSessionManagerBridgeTest {
         whenever(controller.playbackState).thenReturn(playback)
         whenever(msm.getActiveSessions(any())).thenReturn(listOf(controller))
 
-        val media = MediaSessionManagerBridge.sampleUsingManager(
+        val sampled = MediaSessionManagerBridge.sampleUsingManager(
             packageName = appPackage,
             msm = msm,
             extract = { c ->
@@ -115,7 +115,9 @@ class MediaSessionManagerBridgeTest {
         assertEquals(MediaNotificationListener::class.java.name, captor.firstValue.className)
         assertEquals(appPackage, captor.firstValue.packageName)
 
+        val media = sampled.media
         assertNotNull(media)
+        assertNull(sampled.artworkBytes)
         assertEquals(PlaybackState.PLAYING, media!!.playbackState)
         assertEquals(7_777L, media.positionMs)
         assertEquals(333_000L, media.durationMs)
@@ -133,13 +135,14 @@ class MediaSessionManagerBridgeTest {
     fun sampleUsingManager_emptyControllers_returnsNull() {
         val msm = mock<MediaSessionManager>()
         whenever(msm.getActiveSessions(any())).thenReturn(emptyList())
-        val media = MediaSessionManagerBridge.sampleUsingManager(
+        val sampled = MediaSessionManagerBridge.sampleUsingManager(
             packageName = appPackage,
             msm = msm,
             extract = { error("none") },
             updatedAt = "t",
         )
-        assertNull(media)
+        assertNull(sampled.media)
+        assertNull(sampled.artworkBytes)
         verify(msm).getActiveSessions(any())
     }
 

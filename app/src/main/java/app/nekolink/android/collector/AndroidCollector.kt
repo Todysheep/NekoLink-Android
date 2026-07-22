@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -15,6 +16,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
 import app.nekolink.android.domain.BackgroundFilter
+import app.nekolink.android.net.ArtworkAsset
 import app.nekolink.android.protocol.BackgroundApp
 import app.nekolink.android.protocol.CollectedSample
 import app.nekolink.android.protocol.DeviceSummary
@@ -56,7 +58,7 @@ class AndroidCollector(
         } else {
             emptyList<BackgroundApp>() to 0
         }
-        val media = sampleMedia()
+        val (media, artworkBytes) = sampleMedia()
         val device = DeviceSummary(
             batteryPercent = batteryPercent(),
             osVersion = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
@@ -65,6 +67,7 @@ class AndroidCollector(
         return CollectedSample(
             foreground = foreground,
             media = media,
+            artworkBytes = artworkBytes,
             backgroundApps = backgroundApps,
             backgroundHiddenCount = hidden,
             device = device,
@@ -228,22 +231,23 @@ class AndroidCollector(
     /**
      * Sole production media path:
      * [MediaSessionManagerBridge.sampleUsingManager]
-     * → NLS ComponentName → `msm.getActiveSessions(cn)` → G1 map
+     * → NLS ComponentName → `msm.getActiveSessions(cn)` → G1 map + optional artwork bytes
      */
-    private fun sampleMedia(): MediaSession? {
+    private fun sampleMedia(): Pair<MediaSession?, ByteArray?> {
         return try {
             val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-                ?: return null
-            val media = MediaSessionManagerBridge.sampleUsingManager(
+                ?: return null to null
+            val sampled = MediaSessionManagerBridge.sampleUsingManager(
                 packageName = context.packageName,
                 msm = msm,
                 extract = ::extractControllerFields,
                 updatedAt = Instant.now().toString(),
             )
             // Media session path still carries packageName; resolve to display label for the board.
-            media?.let { resolveMediaSourceApp(it) }
+            val media = sampled.media?.let { resolveMediaSourceApp(it) }
+            media to sampled.artworkBytes
         } catch (_: Exception) {
-            null
+            null to null
         }
     }
 
@@ -261,6 +265,7 @@ class AndroidCollector(
         val album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)
         val duration = meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)
         val state = c.playbackState
+        val artworkBytes = extractArtworkBytes(meta)
         return MediaSessionSamplePath.ControllerFields(
             packageName = c.packageName,
             title = title,
@@ -269,7 +274,24 @@ class AndroidCollector(
             androidPlaybackState = state?.state,
             positionMs = state?.position,
             durationMs = duration,
+            artworkBytes = artworkBytes,
         )
+    }
+
+    /**
+     * Bitmap album art from metadata (ART then ALBUM_ART). URI-based art skipped for MVP.
+     * Compresses before leaving the framework object; oversize → null.
+     */
+    private fun extractArtworkBytes(meta: MediaMetadata?): ByteArray? {
+        if (meta == null) return null
+        val bitmap: Bitmap = meta.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            ?: meta.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: return null
+        return try {
+            ArtworkAsset.compressBitmap(bitmap)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun batteryPercent(): Int? {
